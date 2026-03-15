@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Supply Chain Network Explorer</title>
+  <script type="module" src="https://js.arcgis.com/5.0/"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: "Avenir Next", "Helvetica Neue", sans-serif; }
+
+    calcite-shell { height: 100vh; }
+
+    arcgis-map { flex: 1; }
+
+    /* ── Graph Panel ── */
+    #graph-panel {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: #1b2631;
+      color: #ecf0f1;
+    }
+    #graph-panel h3 { margin: 0; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #2c3e50; }
+    #graph-svg-container { flex: 1; overflow: hidden; position: relative; }
+    #graph-svg { width: 100%; height: 100%; }
+
+    /* ── Algorithm Controls ── */
+    #algo-bar {
+      display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px;
+      border-top: 1px solid #2c3e50; background: #152028;
+    }
+    #algo-bar button {
+      font-size: 11px; padding: 4px 10px; border: 1px solid #3498db;
+      background: transparent; color: #3498db; border-radius: 4px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    #algo-bar button:hover { background: #3498db; color: #fff; }
+    #algo-bar button.active { background: #2980b9; color: #fff; border-color: #2980b9; }
+
+    /* ── Node Inspector ── */
+    #inspector {
+      max-height: 200px; overflow-y: auto; padding: 10px 14px;
+      border-top: 1px solid #2c3e50; font-size: 12px; background: #152028;
+    }
+    #inspector h4 { margin: 0 0 6px; color: #3498db; }
+    #inspector .metric { display: flex; justify-content: space-between; padding: 2px 0; }
+    #inspector .metric-label { color: #95a5a6; }
+    #inspector .metric-value { color: #ecf0f1; font-weight: 600; }
+
+    /* ── Legend ── */
+    #legend {
+      display: flex; gap: 12px; padding: 6px 14px;
+      border-top: 1px solid #2c3e50; font-size: 11px; flex-wrap: wrap;
+    }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    /* ── Stats Bar ── */
+    #stats-bar {
+      display: flex; gap: 16px; padding: 8px 14px;
+      border-bottom: 1px solid #2c3e50; font-size: 11px; color: #95a5a6;
+      background: #152028;
+    }
+    #stats-bar .stat-value { color: #3498db; font-weight: 700; }
+
+    /* ── Map Popup override ── */
+    .popup-content { font-size: 13px; line-height: 1.6; }
+    .popup-content .label { color: #666; }
+    .popup-content .value { font-weight: 600; }
+  </style>
+</head>
+<body class="calcite-mode-dark">
+  <calcite-shell>
+    <!-- Header -->
+    <calcite-navigation slot="header">
+      <calcite-navigation-logo
+        slot="logo"
+        heading="Supply Chain Network Explorer"
+        description="ArcGIS 5.0 + D3.js Graph Visualization"
+        icon="graph-moving"
+      ></calcite-navigation-logo>
+      <calcite-action-pad slot="content-end" layout="horizontal" expand-disabled>
+        <calcite-action id="btn-toggle-links" text="Toggle Map Links" icon="line"></calcite-action>
+        <calcite-action id="btn-fit-graph" text="Fit Graph" icon="extent"></calcite-action>
+        <calcite-action id="btn-reset" text="Reset" icon="reset"></calcite-action>
+      </calcite-action-pad>
+    </calcite-navigation>
+
+    <!-- Right panel: Graph -->
+    <calcite-shell-panel slot="panel-end" width-scale="l" display-mode="float">
+      <calcite-panel heading="Network Graph" description="Force-directed topology">
+        <div id="graph-panel">
+          <div id="stats-bar">
+            <span>Nodes: <span class="stat-value" id="stat-nodes">0</span></span>
+            <span>Edges: <span class="stat-value" id="stat-edges">0</span></span>
+            <span>Density: <span class="stat-value" id="stat-density">0</span></span>
+            <span>Communities: <span class="stat-value" id="stat-communities">0</span></span>
+          </div>
+          <div id="graph-svg-container">
+            <svg id="graph-svg"></svg>
+          </div>
+          <div id="legend"></div>
+          <div id="algo-bar">
+            <button data-algo="degree" title="Size nodes by connection count">Degree</button>
+            <button data-algo="pagerank" title="Size nodes by PageRank importance">PageRank</button>
+            <button data-algo="betweenness" title="Size nodes by betweenness centrality">Betweenness</button>
+            <button data-algo="community" title="Color nodes by detected community">Communities</button>
+            <button data-algo="shortest" title="Find shortest path between two selected nodes">Shortest Path</button>
+          </div>
+          <div id="inspector">
+            <h4>Click a node to inspect</h4>
+          </div>
+        </div>
+      </calcite-panel>
+    </calcite-shell-panel>
+
+    <!-- Map -->
+    <arcgis-map basemap="dark-gray-vector" zoom="2" center="20, 25" popup-disabled>
+      <arcgis-zoom slot="top-left"></arcgis-zoom>
+      <arcgis-popup slot="popup"></arcgis-popup>
+    </arcgis-map>
+  </calcite-shell>
+
+  <script type="module">
+    // ═══════════════════════════════════════════════════════════════
+    // 1. SAMPLE DATA — Global Supply Chain Network
+    // ═══════════════════════════════════════════════════════════════
+    const TYPES = {
+      factory:   { color: "#e74c3c", label: "Factory",   icon: "industrial-building" },
+      warehouse: { color: "#3498db", label: "Warehouse", icon: "locator" },
+      port:      { color: "#2ecc71", label: "Port",      icon: "ship" },
+      supplier:  { color: "#f39c12", label: "Supplier",  icon: "organization" },
+      retailer:  { color: "#9b59b6", label: "Retailer",  icon: "store" },
+    };
+
+    const nodes = [
+      // Factories
+      { id: "f1", name: "Shenzhen Factory",    type: "factory",   lat: 22.543,  lon: 114.058, country: "China",       capacity: 50000 },
+      { id: "f2", name: "Detroit Assembly",     type: "factory",   lat: 42.331,  lon: -83.046, country: "USA",         capacity: 30000 },
+      { id: "f3", name: "Stuttgart Plant",      type: "factory",   lat: 48.775,  lon: 9.182,   country: "Germany",     capacity: 25000 },
+      { id: "f4", name: "Chennai Factory",      type: "factory",   lat: 13.083,  lon: 80.270,  country: "India",       capacity: 40000 },
+      { id: "f5", name: "Monterrey Plant",      type: "factory",   lat: 25.687,  lon: -100.317,country: "Mexico",      capacity: 20000 },
+      // Warehouses
+      { id: "w1", name: "Rotterdam Hub",        type: "warehouse", lat: 51.924,  lon: 4.477,   country: "Netherlands", capacity: 80000 },
+      { id: "w2", name: "Singapore Logistics",  type: "warehouse", lat: 1.352,   lon: 103.820, country: "Singapore",   capacity: 60000 },
+      { id: "w3", name: "Memphis Distribution", type: "warehouse", lat: 35.149,  lon: -90.049, country: "USA",         capacity: 70000 },
+      { id: "w4", name: "Dubai Logistics",      type: "warehouse", lat: 25.276,  lon: 55.296,  country: "UAE",         capacity: 55000 },
+      // Ports
+      { id: "p1", name: "Shanghai Port",        type: "port",      lat: 31.230,  lon: 121.474, country: "China",       capacity: 43000 },
+      { id: "p2", name: "Los Angeles Port",     type: "port",      lat: 33.740,  lon: -118.260,country: "USA",         capacity: 20000 },
+      { id: "p3", name: "Hamburg Port",          type: "port",      lat: 53.551,  lon: 9.994,   country: "Germany",     capacity: 18000 },
+      { id: "p4", name: "Mumbai Port",           type: "port",      lat: 19.076,  lon: 72.878,  country: "India",       capacity: 15000 },
+      // Suppliers
+      { id: "s1", name: "Taiwan Semiconductor", type: "supplier",  lat: 24.799,  lon: 120.979, country: "Taiwan",      capacity: 10000 },
+      { id: "s2", name: "Korean Electronics",   type: "supplier",  lat: 37.566,  lon: 126.978, country: "South Korea", capacity: 12000 },
+      { id: "s3", name: "Brazilian Raw Mat.",    type: "supplier",  lat: -23.550, lon: -46.633, country: "Brazil",      capacity: 8000 },
+      { id: "s4", name: "Australian Minerals",  type: "supplier",  lat: -33.868, lon: 151.209, country: "Australia",   capacity: 9000 },
+      // Retailers
+      { id: "r1", name: "NYC Retail Center",    type: "retailer",  lat: 40.713,  lon: -74.006, country: "USA",         capacity: 5000 },
+      { id: "r2", name: "London Retail Hub",     type: "retailer",  lat: 51.507,  lon: -0.128,  country: "UK",          capacity: 4500 },
+      { id: "r3", name: "Tokyo Retail Center",  type: "retailer",  lat: 35.689,  lon: 139.692, country: "Japan",       capacity: 6000 },
+      { id: "r4", name: "São Paulo Retail",     type: "retailer",  lat: -23.533, lon: -46.625, country: "Brazil",      capacity: 3500 },
+    ];
+
+    const links = [
+      // Supplier → Factory
+      { source: "s1", target: "f1", type: "supplies",   volume: 8000 },
+      { source: "s2", target: "f1", type: "supplies",   volume: 6000 },
+      { source: "s1", target: "f4", type: "supplies",   volume: 4000 },
+      { source: "s3", target: "f5", type: "supplies",   volume: 3000 },
+      { source: "s4", target: "f4", type: "supplies",   volume: 5000 },
+      { source: "s2", target: "f3", type: "supplies",   volume: 7000 },
+      // Factory → Port
+      { source: "f1", target: "p1", type: "ships",      volume: 20000 },
+      { source: "f3", target: "p3", type: "ships",      volume: 12000 },
+      { source: "f4", target: "p4", type: "ships",      volume: 15000 },
+      { source: "f2", target: "p2", type: "ships",      volume: 10000 },
+      { source: "f5", target: "p2", type: "ships",      volume: 8000 },
+      // Port → Warehouse
+      { source: "p1", target: "w2", type: "transit",    volume: 18000 },
+      { source: "p1", target: "w4", type: "transit",    volume: 10000 },
+      { source: "p2", target: "w3", type: "transit",    volume: 16000 },
+      { source: "p3", target: "w1", type: "transit",    volume: 14000 },
+      { source: "p4", target: "w4", type: "transit",    volume: 12000 },
+      { source: "p4", target: "w2", type: "transit",    volume: 8000 },
+      // Warehouse → Retailer
+      { source: "w1", target: "r2", type: "delivers",   volume: 9000 },
+      { source: "w2", target: "r3", type: "delivers",   volume: 11000 },
+      { source: "w3", target: "r1", type: "delivers",   volume: 13000 },
+      { source: "w4", target: "r2", type: "delivers",   volume: 5000 },
+      { source: "w3", target: "r4", type: "delivers",   volume: 6000 },
+      { source: "w1", target: "r3", type: "delivers",   volume: 4000 },
+      // Cross-links (secondary routes)
+      { source: "f1", target: "w2", type: "direct",     volume: 5000 },
+      { source: "f2", target: "w3", type: "direct",     volume: 7000 },
+      { source: "w2", target: "w4", type: "transfer",   volume: 3000 },
+      { source: "w1", target: "w3", type: "transfer",   volume: 2000 },
+    ];
+
+    // ═══════════════════════════════════════════════════════════════
+    // 2. GRAPH ALGORITHMS (inspired by dgraph-viewer)
+    // ═══════════════════════════════════════════════════════════════
+    function buildAdjacency(nodes, links) {
+      const adj = new Map();
+      nodes.forEach(n => adj.set(n.id, []));
+      links.forEach(l => {
+        const sid = typeof l.source === "object" ? l.source.id : l.source;
+        const tid = typeof l.target === "object" ? l.target.id : l.target;
+        adj.get(sid)?.push(tid);
+        adj.get(tid)?.push(sid);
+      });
+      return adj;
+    }
+
+    function degreeCentrality(nodes, links) {
+      const adj = buildAdjacency(nodes, links);
+      const scores = new Map();
+      const maxDeg = nodes.length - 1;
+      adj.forEach((neighbors, id) => scores.set(id, neighbors.length / maxDeg));
+      return scores;
+    }
+
+    function pageRank(nodes, links, { damping = 0.85, iterations = 30 } = {}) {
+      const adj = buildAdjacency(nodes, links);
+      const n = nodes.length;
+      let ranks = new Map();
+      nodes.forEach(nd => ranks.set(nd.id, 1 / n));
+
+      for (let i = 0; i < iterations; i++) {
+        const newRanks = new Map();
+        let danglingSum = 0;
+        nodes.forEach(nd => {
+          if (adj.get(nd.id).length === 0) danglingSum += ranks.get(nd.id);
+        });
+        nodes.forEach(nd => {
+          let sum = danglingSum / n;
+          adj.forEach((neighbors, srcId) => {
+            if (neighbors.includes(nd.id)) {
+              sum += ranks.get(srcId) / neighbors.length;
+            }
+          });
+          newRanks.set(nd.id, (1 - damping) / n + damping * sum);
+        });
+        ranks = newRanks;
+      }
+      return ranks;
+    }
+
+    function betweennessCentrality(nodes, links) {
+      const adj = buildAdjacency(nodes, links);
+      const scores = new Map();
+      nodes.forEach(n => scores.set(n.id, 0));
+
+      nodes.forEach(source => {
+        const stack = [];
+        const pred = new Map();
+        const sigma = new Map();
+        const dist = new Map();
+        const delta = new Map();
+
+        nodes.forEach(n => {
+          pred.set(n.id, []);
+          sigma.set(n.id, 0);
+          dist.set(n.id, -1);
+          delta.set(n.id, 0);
+        });
+        sigma.set(source.id, 1);
+        dist.set(source.id, 0);
+
+        const queue = [source.id];
+        while (queue.length) {
+          const v = queue.shift();
+          stack.push(v);
+          for (const w of adj.get(v)) {
+            if (dist.get(w) < 0) {
+              queue.push(w);
+              dist.set(w, dist.get(v) + 1);
+            }
+            if (dist.get(w) === dist.get(v) + 1) {
+              sigma.set(w, sigma.get(w) + sigma.get(v));
+              pred.get(w).push(v);
+            }
+          }
+        }
+        while (stack.length) {
+          const w = stack.pop();
+          for (const v of pred.get(w)) {
+            delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
+          }
+          if (w !== source.id) scores.set(w, scores.get(w) + delta.get(w));
+        }
+      });
+
+      // Normalize
+      const n = nodes.length;
+      const norm = (n - 1) * (n - 2);
+      if (norm > 0) scores.forEach((v, k) => scores.set(k, v / norm));
+      return scores;
+    }
+
+    function communityDetection(nodes, links, iterations = 15) {
+      const adj = buildAdjacency(nodes, links);
+      const labels = new Map();
+      nodes.forEach(n => labels.set(n.id, n.id));
+
+      for (let i = 0; i < iterations; i++) {
+        const order = [...nodes].sort(() => Math.random() - 0.5);
+        let changed = false;
+        for (const node of order) {
+          const neighbors = adj.get(node.id);
+          if (!neighbors.length) continue;
+          const freq = new Map();
+          for (const nb of neighbors) {
+            const lbl = labels.get(nb);
+            freq.set(lbl, (freq.get(lbl) || 0) + 1);
+          }
+          let maxCount = 0, maxLabel = labels.get(node.id);
+          freq.forEach((count, lbl) => { if (count > maxCount) { maxCount = count; maxLabel = lbl; } });
+          if (maxLabel !== labels.get(node.id)) { labels.set(node.id, maxLabel); changed = true; }
+        }
+        if (!changed) break;
+      }
+
+      const communities = new Map();
+      labels.forEach((lbl, id) => {
+        if (!communities.has(lbl)) communities.set(lbl, new Set());
+        communities.get(lbl).add(id);
+      });
+      return { labels, communities: [...communities.values()] };
+    }
+
+    function shortestPathBFS(nodes, links, srcId, tgtId) {
+      const adj = buildAdjacency(nodes, links);
+      const visited = new Set([srcId]);
+      const queue = [[srcId]];
+      while (queue.length) {
+        const path = queue.shift();
+        const current = path[path.length - 1];
+        if (current === tgtId) return path;
+        for (const nb of adj.get(current) || []) {
+          if (!visited.has(nb)) {
+            visited.add(nb);
+            queue.push([...path, nb]);
+          }
+        }
+      }
+      return null;
+    }
+
+    function density(nodes, links) {
+      const n = nodes.length;
+      return n < 2 ? 0 : (2 * links.length) / (n * (n - 1));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3. ARCGIS MAP SETUP
+    // ═══════════════════════════════════════════════════════════════
+    const [GraphicsLayer, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, Point, PopupTemplate, TextSymbol] =
+      await $arcgis.import([
+        "@arcgis/core/layers/GraphicsLayer.js",
+        "@arcgis/core/Graphic.js",
+        "@arcgis/core/symbols/SimpleMarkerSymbol.js",
+        "@arcgis/core/symbols/SimpleLineSymbol.js",
+        "@arcgis/core/geometry/Point.js",
+        "@arcgis/core/PopupTemplate.js",
+        "@arcgis/core/symbols/TextSymbol.js",
+      ]);
+
+    const mapEl = document.querySelector("arcgis-map");
+    const popupEl = document.querySelector("arcgis-popup");
+    await mapEl.viewOnReady();
+    await popupEl.componentOnReady();
+
+    const view = mapEl.view;
+    const linkLayer = new GraphicsLayer({ title: "Supply Links" });
+    const nodeLayer = new GraphicsLayer({ title: "Supply Nodes" });
+    const labelLayer = new GraphicsLayer({ title: "Labels" });
+    const highlightLayer = new GraphicsLayer({ title: "Highlights" });
+    view.map.addMany([linkLayer, highlightLayer, nodeLayer, labelLayer]);
+
+    // Draw map links
+    function drawMapLinks() {
+      linkLayer.removeAll();
+      links.forEach(link => {
+        const sn = nodes.find(n => n.id === link.source || n.id === link.source?.id);
+        const tn = nodes.find(n => n.id === link.target || n.id === link.target?.id);
+        if (!sn || !tn) return;
+
+        const volumeWidth = Math.max(1, Math.min(5, link.volume / 5000));
+        const lineColor = link.type === "supplies" ? "#f39c12" :
+                          link.type === "ships"    ? "#e74c3c" :
+                          link.type === "transit"  ? "#2ecc71" :
+                          link.type === "delivers" ? "#9b59b6" :
+                          link.type === "direct"   ? "#e67e22" : "#7f8c8d";
+
+        linkLayer.add(new Graphic({
+          geometry: {
+            type: "polyline",
+            paths: [[[sn.lon, sn.lat], [tn.lon, tn.lat]]],
+          },
+          symbol: new SimpleLineSymbol({
+            color: lineColor,
+            width: volumeWidth,
+            style: link.type === "transfer" ? "dash" : "solid",
+          }),
+          attributes: { source: sn.name, target: tn.name, type: link.type, volume: link.volume },
+        }));
+      });
+    }
+    drawMapLinks();
+
+    // Draw map nodes
+    const nodeGraphicsMap = new Map();
+    nodes.forEach(node => {
+      const cfg = TYPES[node.type];
+      const size = Math.max(10, Math.min(22, 8 + Math.log2(node.capacity) * 1.2));
+
+      const graphic = new Graphic({
+        geometry: new Point({ longitude: node.lon, latitude: node.lat }),
+        symbol: new SimpleMarkerSymbol({
+          color: cfg.color,
+          size: size,
+          outline: { color: "#1b2631", width: 2 },
+          style: node.type === "factory" ? "diamond" :
+                 node.type === "port" ? "triangle" :
+                 node.type === "supplier" ? "square" :
+                 node.type === "retailer" ? "cross" : "circle",
+        }),
+        attributes: { ...node },
+      });
+
+      nodeLayer.add(graphic);
+      nodeGraphicsMap.set(node.id, graphic);
+
+      // Label
+      labelLayer.add(new Graphic({
+        geometry: new Point({ longitude: node.lon, latitude: node.lat }),
+        symbol: new TextSymbol({
+          text: node.name,
+          color: "#ecf0f1",
+          haloColor: "#1b2631",
+          haloSize: 2,
+          font: { size: 9, weight: "bold" },
+          yoffset: -14,
+        }),
+      }));
+    });
+
+    // Map click → popup + graph highlight
+    mapEl.addEventListener("arcgisViewClick", async (event) => {
+      const hit = await view.hitTest(event.detail);
+      const result = hit.results.find(r => r.graphic?.attributes?.id);
+      if (result) {
+        const attr = result.attributes || result.graphic.attributes;
+        const nodeId = attr.id;
+        highlightNodeEverywhere(nodeId);
+
+        popupEl.location = result.mapPoint;
+        popupEl.heading = attr.name;
+        const adj = buildAdjacency(nodes, links);
+        const degree = adj.get(nodeId)?.length || 0;
+        popupEl.content = `
+          <div class="popup-content">
+            <div><span class="label">Type:</span> <span class="value">${TYPES[attr.type]?.label}</span></div>
+            <div><span class="label">Country:</span> <span class="value">${attr.country}</span></div>
+            <div><span class="label">Capacity:</span> <span class="value">${attr.capacity?.toLocaleString()}</span></div>
+            <div><span class="label">Connections:</span> <span class="value">${degree}</span></div>
+          </div>
+        `;
+        popupEl.open = true;
+      } else {
+        popupEl.open = false;
+        clearHighlights();
+      }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4. D3 FORCE-DIRECTED GRAPH
+    // ═══════════════════════════════════════════════════════════════
+    const svgEl = document.getElementById("graph-svg");
+    const container = document.getElementById("graph-svg-container");
+    const width = container.clientWidth || 420;
+    const height = container.clientHeight || 500;
+
+    const svg = d3.select(svgEl).attr("viewBox", [0, 0, width, height]);
+
+    // Arrow markers for directed edges
+    const defs = svg.append("defs");
+    Object.entries(TYPES).forEach(([type, cfg]) => {
+      defs.append("marker")
+        .attr("id", `arrow-${type}`)
+        .attr("viewBox", "0 -3 6 6")
+        .attr("refX", 18).attr("refY", 0)
+        .attr("markerWidth", 5).attr("markerHeight", 5)
+        .attr("orient", "auto")
+        .append("path").attr("d", "M0,-3L6,0L0,3").attr("fill", cfg.color).attr("opacity", 0.6);
+    });
+
+    const gLinks = svg.append("g").attr("class", "links");
+    const gNodes = svg.append("g").attr("class", "nodes");
+
+    // Deep copy for D3 mutation
+    const simNodes = nodes.map(n => ({ ...n }));
+    const simLinks = links.map(l => ({ ...l }));
+
+    const simulation = d3.forceSimulation(simNodes)
+      .force("link", d3.forceLink(simLinks).id(d => d.id).distance(60).strength(0.4))
+      .force("charge", d3.forceManyBody().strength(-120))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collision", d3.forceCollide(20))
+      .force("x", d3.forceX(width / 2).strength(0.05))
+      .force("y", d3.forceY(height / 2).strength(0.05));
+
+    // Links
+    const linkSel = gLinks.selectAll("line")
+      .data(simLinks)
+      .join("line")
+      .attr("stroke", d => {
+        const srcNode = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source);
+        return TYPES[srcNode?.type]?.color || "#555";
+      })
+      .attr("stroke-width", d => Math.max(1, d.volume / 5000))
+      .attr("stroke-opacity", 0.5)
+      .attr("marker-end", d => {
+        const srcNode = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source);
+        return `url(#arrow-${srcNode?.type || "warehouse"})`;
+      });
+
+    // Nodes
+    const nodeSel = gNodes.selectAll("g")
+      .data(simNodes)
+      .join("g")
+      .attr("cursor", "pointer")
+      .call(d3.drag()
+        .on("start", (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+        .on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+      );
+
+    // Node shapes
+    nodeSel.each(function(d) {
+      const g = d3.select(this);
+      const r = Math.max(6, Math.min(14, 5 + Math.log2((d.capacity || 1000)) * 0.8));
+      d._radius = r;
+      const cfg = TYPES[d.type];
+
+      if (d.type === "factory") {
+        g.append("rect").attr("width", r*1.6).attr("height", r*1.6).attr("x", -r*0.8).attr("y", -r*0.8)
+          .attr("rx", 2).attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5)
+          .attr("transform", "rotate(45)");
+      } else if (d.type === "port") {
+        g.append("polygon")
+          .attr("points", `0,${-r} ${r*0.87},${r*0.5} ${-r*0.87},${r*0.5}`)
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+      } else if (d.type === "supplier") {
+        g.append("rect").attr("width", r*1.4).attr("height", r*1.4).attr("x", -r*0.7).attr("y", -r*0.7)
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+      } else {
+        g.append("circle").attr("r", r)
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+      }
+
+      // Label
+      g.append("text")
+        .text(d.name.length > 18 ? d.name.slice(0, 16) + "…" : d.name)
+        .attr("dy", r + 12).attr("text-anchor", "middle")
+        .attr("fill", "#bdc3c7").attr("font-size", "8px").attr("font-weight", "500");
+    });
+
+    // Click on graph node
+    let selectedNodes = [];
+    nodeSel.on("click", (event, d) => {
+      event.stopPropagation();
+      highlightNodeEverywhere(d.id);
+    });
+
+    simulation.on("tick", () => {
+      linkSel
+        .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 5. CROSS-HIGHLIGHTING (map ↔ graph)
+    // ═══════════════════════════════════════════════════════════════
+    function highlightNodeEverywhere(nodeId) {
+      const node = nodes.find(n => n.id === nodeId);
+      if (!node) return;
+
+      const adj = buildAdjacency(nodes, links);
+      const neighbors = new Set(adj.get(nodeId) || []);
+      neighbors.add(nodeId);
+
+      // Graph highlight
+      nodeSel.select("circle, rect, polygon").attr("opacity", d => neighbors.has(d.id) ? 1 : 0.15);
+      nodeSel.select("text").attr("opacity", d => neighbors.has(d.id) ? 1 : 0.1);
+      linkSel.attr("stroke-opacity", d => {
+        const sid = d.source.id || d.source;
+        const tid = d.target.id || d.target;
+        return (sid === nodeId || tid === nodeId) ? 0.9 : 0.05;
+      });
+
+      // Map highlight ring
+      highlightLayer.removeAll();
+      highlightLayer.add(new Graphic({
+        geometry: new Point({ longitude: node.lon, latitude: node.lat }),
+        symbol: new SimpleMarkerSymbol({
+          color: [255, 255, 255, 0],
+          size: 30,
+          outline: { color: "#00e5ff", width: 3 },
+        }),
+      }));
+
+      // Zoom map to node
+      view.goTo({ center: [node.lon, node.lat], zoom: Math.max(view.zoom, 4) }, { duration: 800 });
+
+      // Update inspector
+      updateInspector(nodeId);
+
+      // Track for shortest path
+      selectedNodes.push(nodeId);
+      if (selectedNodes.length > 2) selectedNodes = selectedNodes.slice(-2);
+    }
+
+    function clearHighlights() {
+      nodeSel.select("circle, rect, polygon").attr("opacity", 1);
+      nodeSel.select("text").attr("opacity", 1);
+      linkSel.attr("stroke-opacity", 0.5);
+      highlightLayer.removeAll();
+      document.getElementById("inspector").innerHTML = "<h4>Click a node to inspect</h4>";
+    }
+
+    svg.on("click", () => clearHighlights());
+
+    // ═══════════════════════════════════════════════════════════════
+    // 6. INSPECTOR PANEL
+    // ═══════════════════════════════════════════════════════════════
+    function updateInspector(nodeId) {
+      const node = nodes.find(n => n.id === nodeId);
+      if (!node) return;
+      const adj = buildAdjacency(nodes, links);
+      const degree = adj.get(nodeId)?.length || 0;
+      const pr = pageRank(nodes, links);
+      const bc = betweennessCentrality(nodes, links);
+
+      const inLinks = links.filter(l => (l.target.id || l.target) === nodeId);
+      const outLinks = links.filter(l => (l.source.id || l.source) === nodeId);
+      const totalVolume = [...inLinks, ...outLinks].reduce((sum, l) => sum + l.volume, 0);
+
+      document.getElementById("inspector").innerHTML = `
+        <h4>${node.name}</h4>
+        <div class="metric"><span class="metric-label">Type</span><span class="metric-value">${TYPES[node.type].label}</span></div>
+        <div class="metric"><span class="metric-label">Country</span><span class="metric-value">${node.country}</span></div>
+        <div class="metric"><span class="metric-label">Capacity</span><span class="metric-value">${node.capacity.toLocaleString()}</span></div>
+        <div class="metric"><span class="metric-label">Degree</span><span class="metric-value">${degree}</span></div>
+        <div class="metric"><span class="metric-label">In / Out</span><span class="metric-value">${inLinks.length} / ${outLinks.length}</span></div>
+        <div class="metric"><span class="metric-label">Total Volume</span><span class="metric-value">${totalVolume.toLocaleString()}</span></div>
+        <div class="metric"><span class="metric-label">PageRank</span><span class="metric-value">${pr.get(nodeId)?.toFixed(4)}</span></div>
+        <div class="metric"><span class="metric-label">Betweenness</span><span class="metric-value">${bc.get(nodeId)?.toFixed(4)}</span></div>
+      `;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 7. ALGORITHM BUTTONS
+    // ═══════════════════════════════════════════════════════════════
+    const communityColors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c", "#e67e22", "#34495e"];
+    let activeAlgo = null;
+
+    document.getElementById("algo-bar").addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const algo = btn.dataset.algo;
+
+      // Toggle off
+      document.querySelectorAll("#algo-bar button").forEach(b => b.classList.remove("active"));
+      if (activeAlgo === algo) { activeAlgo = null; resetGraphVisuals(); return; }
+      activeAlgo = algo;
+      btn.classList.add("active");
+
+      if (algo === "degree") {
+        const scores = degreeCentrality(simNodes, simLinks);
+        const max = Math.max(...scores.values());
+        nodeSel.select("circle, rect, polygon")
+          .transition().duration(500)
+          .attr("transform", d => { const s = 0.6 + (scores.get(d.id) / max) * 1.4; return `scale(${s})`; });
+      }
+      else if (algo === "pagerank") {
+        const scores = pageRank(simNodes, simLinks);
+        const max = Math.max(...scores.values());
+        nodeSel.select("circle, rect, polygon")
+          .transition().duration(500)
+          .attr("transform", d => { const s = 0.5 + (scores.get(d.id) / max) * 1.8; return `scale(${s})`; });
+      }
+      else if (algo === "betweenness") {
+        const scores = betweennessCentrality(simNodes, simLinks);
+        const max = Math.max(...scores.values()) || 1;
+        nodeSel.select("circle, rect, polygon")
+          .transition().duration(500)
+          .attr("transform", d => { const s = 0.5 + (scores.get(d.id) / max) * 2; return `scale(${s})`; });
+      }
+      else if (algo === "community") {
+        const { labels, communities: comms } = communityDetection(simNodes, simLinks);
+        const labelToIdx = new Map();
+        let idx = 0;
+        labels.forEach((lbl) => { if (!labelToIdx.has(lbl)) labelToIdx.set(lbl, idx++); });
+        nodeSel.select("circle, rect, polygon")
+          .transition().duration(500)
+          .attr("fill", d => communityColors[labelToIdx.get(labels.get(d.id)) % communityColors.length]);
+        document.getElementById("stat-communities").textContent = comms.length;
+      }
+      else if (algo === "shortest") {
+        if (selectedNodes.length < 2) {
+          document.getElementById("inspector").innerHTML =
+            "<h4>Shortest Path</h4><div class='metric'><span class='metric-label'>Select 2 nodes by clicking them</span></div>";
+          return;
+        }
+        const [src, tgt] = selectedNodes.slice(-2);
+        const path = shortestPathBFS(simNodes, simLinks, src, tgt);
+        if (!path) {
+          document.getElementById("inspector").innerHTML = "<h4>No path found</h4>";
+          return;
+        }
+        const pathSet = new Set(path);
+        nodeSel.select("circle, rect, polygon").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.1);
+        nodeSel.select("text").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.05);
+        linkSel.attr("stroke-opacity", d => {
+          const sid = d.source.id; const tid = d.target.id;
+          for (let i = 0; i < path.length - 1; i++) {
+            if ((path[i] === sid && path[i+1] === tid) || (path[i] === tid && path[i+1] === sid)) return 1;
+          }
+          return 0.03;
+        }).attr("stroke", d => {
+          const sid = d.source.id; const tid = d.target.id;
+          for (let i = 0; i < path.length - 1; i++) {
+            if ((path[i] === sid && path[i+1] === tid) || (path[i] === tid && path[i+1] === sid)) return "#00e5ff";
+          }
+          return TYPES[d.source?.type]?.color || "#555";
+        });
+
+        // Highlight path on map
+        highlightLayer.removeAll();
+        path.forEach(id => {
+          const n = nodes.find(nd => nd.id === id);
+          if (n) highlightLayer.add(new Graphic({
+            geometry: new Point({ longitude: n.lon, latitude: n.lat }),
+            symbol: new SimpleMarkerSymbol({ color: "#00e5ff", size: 16, outline: { color: "#fff", width: 2 } }),
+          }));
+        });
+
+        document.getElementById("inspector").innerHTML = `
+          <h4>Shortest Path (${path.length} hops)</h4>
+          ${path.map(id => `<div class="metric"><span class="metric-value">${nodes.find(n=>n.id===id)?.name}</span></div>`).join("")}
+        `;
+      }
+    });
+
+    function resetGraphVisuals() {
+      nodeSel.select("circle, rect, polygon")
+        .transition().duration(300)
+        .attr("transform", "scale(1)")
+        .attr("fill", d => TYPES[d.type].color)
+        .attr("opacity", 1);
+      nodeSel.select("text").attr("opacity", 1);
+      linkSel.attr("stroke-opacity", 0.5)
+        .attr("stroke", d => TYPES[d.source?.type]?.color || "#555");
+      highlightLayer.removeAll();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 8. TOOLBAR ACTIONS
+    // ═══════════════════════════════════════════════════════════════
+    document.getElementById("btn-toggle-links").addEventListener("click", () => {
+      linkLayer.visible = !linkLayer.visible;
+    });
+
+    document.getElementById("btn-fit-graph").addEventListener("click", () => {
+      simulation.alpha(0.8).restart();
+    });
+
+    document.getElementById("btn-reset").addEventListener("click", () => {
+      activeAlgo = null;
+      selectedNodes = [];
+      document.querySelectorAll("#algo-bar button").forEach(b => b.classList.remove("active"));
+      resetGraphVisuals();
+      clearHighlights();
+      popupEl.open = false;
+      view.goTo({ center: [20, 25], zoom: 2 }, { duration: 600 });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 9. LEGEND & STATS
+    // ═══════════════════════════════════════════════════════════════
+    const legendEl = document.getElementById("legend");
+    Object.entries(TYPES).forEach(([, cfg]) => {
+      legendEl.innerHTML += `<span class="legend-item"><span class="legend-dot" style="background:${cfg.color}"></span>${cfg.label}</span>`;
+    });
+
+    document.getElementById("stat-nodes").textContent = nodes.length;
+    document.getElementById("stat-edges").textContent = links.length;
+    document.getElementById("stat-density").textContent = density(nodes, links).toFixed(3);
+    const { communities: initComms } = communityDetection(nodes, links);
+    document.getElementById("stat-communities").textContent = initComms.length;
+  </script>
+</body>
+</html>
