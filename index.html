@@ -7,200 +7,363 @@
   <script type="module" src="https://js.arcgis.com/5.0/"></script>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; font-family: "Avenir Next", "Helvetica Neue", sans-serif; }
+    :root {
+      --bg-primary: #0f1923;
+      --bg-surface: #162029;
+      --bg-elevated: #1c2b38;
+      --border: rgba(56, 189, 248, 0.12);
+      --border-active: rgba(56, 189, 248, 0.35);
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #38bdf8;
+      --accent-dim: rgba(56, 189, 248, 0.15);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; font-family: "Avenir Next", "Helvetica Neue", sans-serif; background: var(--bg-primary); }
 
-    calcite-shell { height: 100vh; }
+    /* ── App Layout ── */
+    #app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
-    arcgis-map { flex: 1; }
+    /* ── Header ── */
+    #app-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; height: 48px; min-height: 48px;
+      background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+    #app-header .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 14px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.3px;
+    }
+    #app-header .logo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    #app-header .subtitle { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
+    .header-actions { display: flex; gap: 4px; }
+    .header-btn {
+      padding: 6px 12px; font-size: 11px; font-weight: 600;
+      background: var(--bg-elevated); color: var(--text-secondary);
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .header-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--border-active); }
+    .header-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+    /* ── Split Panels ── */
+    #split-container { display: flex; flex: 1; overflow: hidden; }
+
+    #map-panel { flex: 1; position: relative; min-width: 0; }
+    arcgis-map { width: 100%; height: 100%; }
+
+    /* ── Resizer ── */
+    #resizer {
+      width: 5px; cursor: col-resize; background: var(--border);
+      transition: background 0.15s; z-index: 5; flex-shrink: 0;
+    }
+    #resizer:hover, #resizer.dragging { background: var(--accent); }
 
     /* ── Graph Panel ── */
     #graph-panel {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      background: #1b2631;
-      color: #ecf0f1;
+      width: 520px; min-width: 320px; max-width: 65vw;
+      display: flex; flex-direction: column;
+      background: var(--bg-primary); position: relative; overflow: hidden;
     }
-    #graph-panel h3 { margin: 0; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #2c3e50; }
-    #graph-svg-container { flex: 1; overflow: hidden; position: relative; }
-    #graph-svg { width: 100%; height: 100%; }
 
-    /* ── Algorithm Controls ── */
-    #algo-bar {
-      display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px;
-      border-top: 1px solid #2c3e50; background: #152028;
+    /* ── Graph Header ── */
+    #graph-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; background: var(--bg-surface);
+      border-bottom: 1px solid var(--border); z-index: 2;
     }
-    #algo-bar button {
-      font-size: 11px; padding: 4px 10px; border: 1px solid #3498db;
-      background: transparent; color: #3498db; border-radius: 4px; cursor: pointer;
-      transition: all 0.15s;
+    #graph-header h2 {
+      margin: 0; font-size: 13px; font-weight: 700; color: var(--text-primary);
+      display: flex; align-items: center; gap: 8px;
     }
-    #algo-bar button:hover { background: #3498db; color: #fff; }
-    #algo-bar button.active { background: #2980b9; color: #fff; border-color: #2980b9; }
+    #graph-header h2::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%;
+      background: #2ecc71; box-shadow: 0 0 6px #2ecc71;
+    }
 
-    /* ── Node Inspector ── */
-    #inspector {
-      max-height: 200px; overflow-y: auto; padding: 10px 14px;
-      border-top: 1px solid #2c3e50; font-size: 12px; background: #152028;
-    }
-    #inspector h4 { margin: 0 0 6px; color: #3498db; }
-    #inspector .metric { display: flex; justify-content: space-between; padding: 2px 0; }
-    #inspector .metric-label { color: #95a5a6; }
-    #inspector .metric-value { color: #ecf0f1; font-weight: 600; }
-
-    /* ── Legend ── */
-    #legend {
-      display: flex; gap: 12px; padding: 6px 14px;
-      border-top: 1px solid #2c3e50; font-size: 11px; flex-wrap: wrap;
-    }
-    .legend-item { display: flex; align-items: center; gap: 4px; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
-
-    /* ── Stats Bar ── */
+    /* ── Stats Row ── */
     #stats-bar {
-      display: flex; gap: 16px; padding: 8px 14px;
-      border-bottom: 1px solid #2c3e50; font-size: 11px; color: #95a5a6;
-      background: #152028;
+      display: flex; gap: 2px; padding: 6px 16px;
+      background: var(--bg-surface); border-bottom: 1px solid var(--border);
     }
-    #stats-bar .stat-value { color: #3498db; font-weight: 700; }
+    .stat-chip {
+      display: flex; align-items: center; gap: 4px;
+      padding: 3px 10px; font-size: 10px; font-weight: 600;
+      background: var(--bg-elevated); border-radius: 4px; color: var(--text-muted);
+    }
+    .stat-chip .val { color: var(--accent); }
 
-    /* ── Map Popup override ── */
+    /* ── SVG Canvas ── */
+    #graph-svg-container {
+      flex: 1; position: relative; overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(56,189,248,0.03) 0%, transparent 70%),
+        var(--bg-primary);
+    }
+    #graph-svg { width: 100%; height: 100%; display: block; }
+
+    /* ── Graph Zoom Controls (floating) ── */
+    #graph-controls {
+      position: absolute; top: 12px; right: 12px;
+      display: flex; flex-direction: column; gap: 3px; z-index: 3;
+    }
+    .g-ctrl-btn {
+      width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-secondary); cursor: pointer; font-size: 16px; font-weight: 700;
+      transition: all 0.15s ease; line-height: 1; backdrop-filter: blur(8px);
+    }
+    .g-ctrl-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--border-active); }
+    .g-ctrl-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+    /* ── Zoom Level Indicator ── */
+    #zoom-level {
+      position: absolute; bottom: 12px; right: 12px;
+      padding: 3px 8px; font-size: 10px; font-weight: 600;
+      color: var(--text-muted); background: var(--bg-surface);
+      border: 1px solid var(--border); border-radius: 4px;
+      z-index: 3; pointer-events: none;
+    }
+
+    /* ── Graph Hint ── */
+    #graph-hint {
+      position: absolute; bottom: 12px; left: 12px;
+      padding: 4px 10px; font-size: 10px; color: var(--text-muted);
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 4px; z-index: 3; pointer-events: none;
+      opacity: 1; transition: opacity 0.5s;
+    }
+    #graph-hint.hidden { opacity: 0; }
+
+    /* ── Bottom Bar: Legend + Algorithms ── */
+    #graph-bottom {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 16px; background: var(--bg-surface);
+      border-top: 1px solid var(--border); flex-wrap: wrap;
+    }
+    .legend-group { display: flex; gap: 10px; align-items: center; }
+    .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted); }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .legend-dot.diamond { border-radius: 1px; transform: rotate(45deg); width: 7px; height: 7px; }
+    .legend-dot.triangle { width: 0; height: 0; border-radius: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; }
+    .legend-dot.square { border-radius: 1px; }
+
+    .separator { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
+
+    #algo-bar { display: flex; gap: 3px; flex-wrap: wrap; }
+    #algo-bar button {
+      font-size: 10px; padding: 4px 10px; font-weight: 600;
+      border: 1px solid var(--border); background: var(--bg-elevated);
+      color: var(--text-muted); border-radius: 5px; cursor: pointer;
+      transition: all 0.15s ease; white-space: nowrap;
+    }
+    #algo-bar button:hover { color: var(--accent); border-color: var(--border-active); background: var(--accent-dim); }
+    #algo-bar button.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+    /* ── Floating Inspector ── */
+    #inspector {
+      position: absolute; top: 12px; left: 12px; z-index: 4;
+      width: 220px; background: var(--bg-surface);
+      border: 1px solid var(--border); border-radius: 10px;
+      backdrop-filter: blur(12px); overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      transform: translateY(-8px); opacity: 0;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: none;
+    }
+    #inspector.visible { transform: translateY(0); opacity: 1; pointer-events: auto; }
+    #inspector-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px 8px; border-bottom: 1px solid var(--border);
+    }
+    #inspector-header h4 { margin: 0; font-size: 12px; font-weight: 700; color: var(--text-primary); }
+    #inspector-close {
+      width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      border-radius: 4px; font-size: 14px; line-height: 1;
+    }
+    #inspector-close:hover { background: var(--accent-dim); color: var(--accent); }
+    #inspector-body { padding: 8px 14px 12px; }
+    .metric { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; }
+    .metric-label { color: var(--text-muted); }
+    .metric-value { color: var(--text-primary); font-weight: 600; }
+    .metric-value.highlight { color: var(--accent); }
+    .inspector-divider { height: 1px; background: var(--border); margin: 6px 0; }
+
+    /* ── Node tooltip ── */
+    #node-tooltip {
+      position: absolute; padding: 6px 10px; font-size: 11px;
+      background: var(--bg-elevated); color: var(--text-primary);
+      border: 1px solid var(--border-active); border-radius: 6px;
+      pointer-events: none; z-index: 10; opacity: 0;
+      transition: opacity 0.12s; white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    /* ── Map Popup ── */
     .popup-content { font-size: 13px; line-height: 1.6; }
     .popup-content .label { color: #666; }
     .popup-content .value { font-weight: 600; }
   </style>
 </head>
-<body class="calcite-mode-dark">
-  <calcite-shell>
+<body>
+  <div id="app">
     <!-- Header -->
-    <calcite-navigation slot="header">
-      <calcite-navigation-logo
-        slot="logo"
-        heading="Supply Chain Network Explorer"
-        description="ArcGIS 5.0 + D3.js Graph Visualization"
-        icon="graph-moving"
-      ></calcite-navigation-logo>
-      <calcite-action-pad slot="content-end" layout="horizontal" expand-disabled>
-        <calcite-action id="btn-toggle-links" text="Toggle Map Links" icon="line"></calcite-action>
-        <calcite-action id="btn-fit-graph" text="Fit Graph" icon="extent"></calcite-action>
-        <calcite-action id="btn-reset" text="Reset" icon="reset"></calcite-action>
-      </calcite-action-pad>
-    </calcite-navigation>
+    <div id="app-header">
+      <div class="logo">
+        <span class="dot"></span>
+        Supply Chain Network Explorer
+        <span class="subtitle">ArcGIS 5.0 + D3.js</span>
+      </div>
+      <div class="header-actions">
+        <button class="header-btn" id="btn-toggle-links">Toggle Routes</button>
+        <button class="header-btn" id="btn-reset">Reset All</button>
+      </div>
+    </div>
 
-    <!-- Right panel: Graph -->
-    <calcite-shell-panel slot="panel-end" width-scale="l" display-mode="float">
-      <calcite-panel heading="Network Graph" description="Force-directed topology">
-        <div id="graph-panel">
-          <div id="stats-bar">
-            <span>Nodes: <span class="stat-value" id="stat-nodes">0</span></span>
-            <span>Edges: <span class="stat-value" id="stat-edges">0</span></span>
-            <span>Density: <span class="stat-value" id="stat-density">0</span></span>
-            <span>Communities: <span class="stat-value" id="stat-communities">0</span></span>
+    <!-- Split: Map | Resizer | Graph -->
+    <div id="split-container">
+      <!-- Map -->
+      <div id="map-panel">
+        <arcgis-map basemap="dark-gray-vector" zoom="2" center="20, 25" popup-disabled>
+          <arcgis-zoom slot="top-left"></arcgis-zoom>
+          <arcgis-popup slot="popup"></arcgis-popup>
+        </arcgis-map>
+      </div>
+
+      <!-- Draggable Resizer -->
+      <div id="resizer"></div>
+
+      <!-- Graph -->
+      <div id="graph-panel">
+        <div id="graph-header">
+          <h2>Network Topology</h2>
+        </div>
+        <div id="stats-bar">
+          <span class="stat-chip">Nodes <span class="val" id="stat-nodes">0</span></span>
+          <span class="stat-chip">Edges <span class="val" id="stat-edges">0</span></span>
+          <span class="stat-chip">Density <span class="val" id="stat-density">0</span></span>
+          <span class="stat-chip">Communities <span class="val" id="stat-communities">0</span></span>
+        </div>
+
+        <div id="graph-svg-container">
+          <svg id="graph-svg"></svg>
+
+          <!-- Floating zoom controls -->
+          <div id="graph-controls">
+            <button class="g-ctrl-btn" id="g-zoom-in" title="Zoom in">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+            <button class="g-ctrl-btn" id="g-zoom-out" title="Zoom out">
+              <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+            </button>
+            <button class="g-ctrl-btn" id="g-zoom-fit" title="Fit to view">
+              <svg viewBox="0 0 24 24"><path d="M3 5v4h2V5h4V3H5a2 2 0 00-2 2zm2 10H3v4a2 2 0 002 2h4v-2H5v-4zm14 4h-4v2h4a2 2 0 002-2v-4h-2v4zm0-14h-4v2h4v4h2V5a2 2 0 00-2-2z"/></svg>
+            </button>
+            <button class="g-ctrl-btn" id="g-zoom-reset" title="Reset zoom to 100%">
+              <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+            </button>
           </div>
-          <div id="graph-svg-container">
-            <svg id="graph-svg"></svg>
-          </div>
-          <div id="legend"></div>
-          <div id="algo-bar">
-            <button data-algo="degree" title="Size nodes by connection count">Degree</button>
-            <button data-algo="pagerank" title="Size nodes by PageRank importance">PageRank</button>
-            <button data-algo="betweenness" title="Size nodes by betweenness centrality">Betweenness</button>
-            <button data-algo="community" title="Color nodes by detected community">Communities</button>
-            <button data-algo="shortest" title="Find shortest path between two selected nodes">Shortest Path</button>
-          </div>
+
+          <div id="zoom-level">100%</div>
+          <div id="graph-hint">Scroll to zoom &middot; Drag to pan &middot; Click node to inspect</div>
+          <div id="node-tooltip"></div>
+
+          <!-- Floating Inspector -->
           <div id="inspector">
-            <h4>Click a node to inspect</h4>
+            <div id="inspector-header">
+              <h4 id="inspector-title">Node</h4>
+              <button id="inspector-close">&times;</button>
+            </div>
+            <div id="inspector-body"></div>
           </div>
         </div>
-      </calcite-panel>
-    </calcite-shell-panel>
 
-    <!-- Map -->
-    <arcgis-map basemap="dark-gray-vector" zoom="2" center="20, 25" popup-disabled>
-      <arcgis-zoom slot="top-left"></arcgis-zoom>
-      <arcgis-popup slot="popup"></arcgis-popup>
-    </arcgis-map>
-  </calcite-shell>
+        <div id="graph-bottom">
+          <div class="legend-group" id="legend"></div>
+          <div class="separator"></div>
+          <div id="algo-bar">
+            <button data-algo="degree" title="Size nodes by connection count">Degree</button>
+            <button data-algo="pagerank" title="Size by PageRank importance">PageRank</button>
+            <button data-algo="betweenness" title="Size by betweenness">Betweenness</button>
+            <button data-algo="community" title="Color by community">Communities</button>
+            <button data-algo="shortest" title="Shortest path between 2 selected nodes">Shortest Path</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module">
     // ═══════════════════════════════════════════════════════════════
-    // 1. SAMPLE DATA — Global Supply Chain Network
+    // 1. SAMPLE DATA
     // ═══════════════════════════════════════════════════════════════
     const TYPES = {
-      factory:   { color: "#e74c3c", label: "Factory",   icon: "industrial-building" },
-      warehouse: { color: "#3498db", label: "Warehouse", icon: "locator" },
-      port:      { color: "#2ecc71", label: "Port",      icon: "ship" },
-      supplier:  { color: "#f39c12", label: "Supplier",  icon: "organization" },
-      retailer:  { color: "#9b59b6", label: "Retailer",  icon: "store" },
+      factory:   { color: "#ef4444", label: "Factory",   shape: "diamond" },
+      warehouse: { color: "#38bdf8", label: "Warehouse", shape: "circle" },
+      port:      { color: "#22c55e", label: "Port",      shape: "triangle" },
+      supplier:  { color: "#f59e0b", label: "Supplier",  shape: "square" },
+      retailer:  { color: "#a78bfa", label: "Retailer",  shape: "circle" },
     };
 
     const nodes = [
-      // Factories
       { id: "f1", name: "Shenzhen Factory",    type: "factory",   lat: 22.543,  lon: 114.058, country: "China",       capacity: 50000 },
       { id: "f2", name: "Detroit Assembly",     type: "factory",   lat: 42.331,  lon: -83.046, country: "USA",         capacity: 30000 },
       { id: "f3", name: "Stuttgart Plant",      type: "factory",   lat: 48.775,  lon: 9.182,   country: "Germany",     capacity: 25000 },
       { id: "f4", name: "Chennai Factory",      type: "factory",   lat: 13.083,  lon: 80.270,  country: "India",       capacity: 40000 },
       { id: "f5", name: "Monterrey Plant",      type: "factory",   lat: 25.687,  lon: -100.317,country: "Mexico",      capacity: 20000 },
-      // Warehouses
       { id: "w1", name: "Rotterdam Hub",        type: "warehouse", lat: 51.924,  lon: 4.477,   country: "Netherlands", capacity: 80000 },
       { id: "w2", name: "Singapore Logistics",  type: "warehouse", lat: 1.352,   lon: 103.820, country: "Singapore",   capacity: 60000 },
       { id: "w3", name: "Memphis Distribution", type: "warehouse", lat: 35.149,  lon: -90.049, country: "USA",         capacity: 70000 },
       { id: "w4", name: "Dubai Logistics",      type: "warehouse", lat: 25.276,  lon: 55.296,  country: "UAE",         capacity: 55000 },
-      // Ports
       { id: "p1", name: "Shanghai Port",        type: "port",      lat: 31.230,  lon: 121.474, country: "China",       capacity: 43000 },
       { id: "p2", name: "Los Angeles Port",     type: "port",      lat: 33.740,  lon: -118.260,country: "USA",         capacity: 20000 },
       { id: "p3", name: "Hamburg Port",          type: "port",      lat: 53.551,  lon: 9.994,   country: "Germany",     capacity: 18000 },
       { id: "p4", name: "Mumbai Port",           type: "port",      lat: 19.076,  lon: 72.878,  country: "India",       capacity: 15000 },
-      // Suppliers
       { id: "s1", name: "Taiwan Semiconductor", type: "supplier",  lat: 24.799,  lon: 120.979, country: "Taiwan",      capacity: 10000 },
       { id: "s2", name: "Korean Electronics",   type: "supplier",  lat: 37.566,  lon: 126.978, country: "South Korea", capacity: 12000 },
       { id: "s3", name: "Brazilian Raw Mat.",    type: "supplier",  lat: -23.550, lon: -46.633, country: "Brazil",      capacity: 8000 },
       { id: "s4", name: "Australian Minerals",  type: "supplier",  lat: -33.868, lon: 151.209, country: "Australia",   capacity: 9000 },
-      // Retailers
       { id: "r1", name: "NYC Retail Center",    type: "retailer",  lat: 40.713,  lon: -74.006, country: "USA",         capacity: 5000 },
       { id: "r2", name: "London Retail Hub",     type: "retailer",  lat: 51.507,  lon: -0.128,  country: "UK",          capacity: 4500 },
       { id: "r3", name: "Tokyo Retail Center",  type: "retailer",  lat: 35.689,  lon: 139.692, country: "Japan",       capacity: 6000 },
-      { id: "r4", name: "São Paulo Retail",     type: "retailer",  lat: -23.533, lon: -46.625, country: "Brazil",      capacity: 3500 },
+      { id: "r4", name: "Sao Paulo Retail",     type: "retailer",  lat: -23.533, lon: -46.625, country: "Brazil",      capacity: 3500 },
     ];
 
     const links = [
-      // Supplier → Factory
-      { source: "s1", target: "f1", type: "supplies",   volume: 8000 },
-      { source: "s2", target: "f1", type: "supplies",   volume: 6000 },
-      { source: "s1", target: "f4", type: "supplies",   volume: 4000 },
-      { source: "s3", target: "f5", type: "supplies",   volume: 3000 },
-      { source: "s4", target: "f4", type: "supplies",   volume: 5000 },
-      { source: "s2", target: "f3", type: "supplies",   volume: 7000 },
-      // Factory → Port
-      { source: "f1", target: "p1", type: "ships",      volume: 20000 },
-      { source: "f3", target: "p3", type: "ships",      volume: 12000 },
-      { source: "f4", target: "p4", type: "ships",      volume: 15000 },
-      { source: "f2", target: "p2", type: "ships",      volume: 10000 },
-      { source: "f5", target: "p2", type: "ships",      volume: 8000 },
-      // Port → Warehouse
-      { source: "p1", target: "w2", type: "transit",    volume: 18000 },
-      { source: "p1", target: "w4", type: "transit",    volume: 10000 },
-      { source: "p2", target: "w3", type: "transit",    volume: 16000 },
-      { source: "p3", target: "w1", type: "transit",    volume: 14000 },
-      { source: "p4", target: "w4", type: "transit",    volume: 12000 },
-      { source: "p4", target: "w2", type: "transit",    volume: 8000 },
-      // Warehouse → Retailer
-      { source: "w1", target: "r2", type: "delivers",   volume: 9000 },
-      { source: "w2", target: "r3", type: "delivers",   volume: 11000 },
-      { source: "w3", target: "r1", type: "delivers",   volume: 13000 },
-      { source: "w4", target: "r2", type: "delivers",   volume: 5000 },
-      { source: "w3", target: "r4", type: "delivers",   volume: 6000 },
-      { source: "w1", target: "r3", type: "delivers",   volume: 4000 },
-      // Cross-links (secondary routes)
-      { source: "f1", target: "w2", type: "direct",     volume: 5000 },
-      { source: "f2", target: "w3", type: "direct",     volume: 7000 },
-      { source: "w2", target: "w4", type: "transfer",   volume: 3000 },
-      { source: "w1", target: "w3", type: "transfer",   volume: 2000 },
+      { source: "s1", target: "f1", type: "supplies", volume: 8000 },
+      { source: "s2", target: "f1", type: "supplies", volume: 6000 },
+      { source: "s1", target: "f4", type: "supplies", volume: 4000 },
+      { source: "s3", target: "f5", type: "supplies", volume: 3000 },
+      { source: "s4", target: "f4", type: "supplies", volume: 5000 },
+      { source: "s2", target: "f3", type: "supplies", volume: 7000 },
+      { source: "f1", target: "p1", type: "ships",    volume: 20000 },
+      { source: "f3", target: "p3", type: "ships",    volume: 12000 },
+      { source: "f4", target: "p4", type: "ships",    volume: 15000 },
+      { source: "f2", target: "p2", type: "ships",    volume: 10000 },
+      { source: "f5", target: "p2", type: "ships",    volume: 8000 },
+      { source: "p1", target: "w2", type: "transit",  volume: 18000 },
+      { source: "p1", target: "w4", type: "transit",  volume: 10000 },
+      { source: "p2", target: "w3", type: "transit",  volume: 16000 },
+      { source: "p3", target: "w1", type: "transit",  volume: 14000 },
+      { source: "p4", target: "w4", type: "transit",  volume: 12000 },
+      { source: "p4", target: "w2", type: "transit",  volume: 8000 },
+      { source: "w1", target: "r2", type: "delivers", volume: 9000 },
+      { source: "w2", target: "r3", type: "delivers", volume: 11000 },
+      { source: "w3", target: "r1", type: "delivers", volume: 13000 },
+      { source: "w4", target: "r2", type: "delivers", volume: 5000 },
+      { source: "w3", target: "r4", type: "delivers", volume: 6000 },
+      { source: "w1", target: "r3", type: "delivers", volume: 4000 },
+      { source: "f1", target: "w2", type: "direct",   volume: 5000 },
+      { source: "f2", target: "w3", type: "direct",   volume: 7000 },
+      { source: "w2", target: "w4", type: "transfer", volume: 3000 },
+      { source: "w1", target: "w3", type: "transfer", volume: 2000 },
     ];
 
     // ═══════════════════════════════════════════════════════════════
-    // 2. GRAPH ALGORITHMS (inspired by dgraph-viewer)
+    // 2. GRAPH ALGORITHMS
     // ═══════════════════════════════════════════════════════════════
     function buildAdjacency(nodes, links) {
       const adj = new Map();
@@ -227,20 +390,13 @@
       const n = nodes.length;
       let ranks = new Map();
       nodes.forEach(nd => ranks.set(nd.id, 1 / n));
-
       for (let i = 0; i < iterations; i++) {
         const newRanks = new Map();
         let danglingSum = 0;
-        nodes.forEach(nd => {
-          if (adj.get(nd.id).length === 0) danglingSum += ranks.get(nd.id);
-        });
+        nodes.forEach(nd => { if (adj.get(nd.id).length === 0) danglingSum += ranks.get(nd.id); });
         nodes.forEach(nd => {
           let sum = danglingSum / n;
-          adj.forEach((neighbors, srcId) => {
-            if (neighbors.includes(nd.id)) {
-              sum += ranks.get(srcId) / neighbors.length;
-            }
-          });
+          adj.forEach((neighbors, srcId) => { if (neighbors.includes(nd.id)) sum += ranks.get(srcId) / neighbors.length; });
           newRanks.set(nd.id, (1 - damping) / n + damping * sum);
         });
         ranks = newRanks;
@@ -252,50 +408,25 @@
       const adj = buildAdjacency(nodes, links);
       const scores = new Map();
       nodes.forEach(n => scores.set(n.id, 0));
-
       nodes.forEach(source => {
-        const stack = [];
-        const pred = new Map();
-        const sigma = new Map();
-        const dist = new Map();
-        const delta = new Map();
-
-        nodes.forEach(n => {
-          pred.set(n.id, []);
-          sigma.set(n.id, 0);
-          dist.set(n.id, -1);
-          delta.set(n.id, 0);
-        });
-        sigma.set(source.id, 1);
-        dist.set(source.id, 0);
-
+        const stack = [], pred = new Map(), sigma = new Map(), dist = new Map(), delta = new Map();
+        nodes.forEach(n => { pred.set(n.id, []); sigma.set(n.id, 0); dist.set(n.id, -1); delta.set(n.id, 0); });
+        sigma.set(source.id, 1); dist.set(source.id, 0);
         const queue = [source.id];
         while (queue.length) {
-          const v = queue.shift();
-          stack.push(v);
+          const v = queue.shift(); stack.push(v);
           for (const w of adj.get(v)) {
-            if (dist.get(w) < 0) {
-              queue.push(w);
-              dist.set(w, dist.get(v) + 1);
-            }
-            if (dist.get(w) === dist.get(v) + 1) {
-              sigma.set(w, sigma.get(w) + sigma.get(v));
-              pred.get(w).push(v);
-            }
+            if (dist.get(w) < 0) { queue.push(w); dist.set(w, dist.get(v) + 1); }
+            if (dist.get(w) === dist.get(v) + 1) { sigma.set(w, sigma.get(w) + sigma.get(v)); pred.get(w).push(v); }
           }
         }
         while (stack.length) {
           const w = stack.pop();
-          for (const v of pred.get(w)) {
-            delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
-          }
+          for (const v of pred.get(w)) delta.set(v, delta.get(v) + (sigma.get(v) / sigma.get(w)) * (1 + delta.get(w)));
           if (w !== source.id) scores.set(w, scores.get(w) + delta.get(w));
         }
       });
-
-      // Normalize
-      const n = nodes.length;
-      const norm = (n - 1) * (n - 2);
+      const n = nodes.length, norm = (n - 1) * (n - 2);
       if (norm > 0) scores.forEach((v, k) => scores.set(k, v / norm));
       return scores;
     }
@@ -304,7 +435,6 @@
       const adj = buildAdjacency(nodes, links);
       const labels = new Map();
       nodes.forEach(n => labels.set(n.id, n.id));
-
       for (let i = 0; i < iterations; i++) {
         const order = [...nodes].sort(() => Math.random() - 0.5);
         let changed = false;
@@ -312,22 +442,15 @@
           const neighbors = adj.get(node.id);
           if (!neighbors.length) continue;
           const freq = new Map();
-          for (const nb of neighbors) {
-            const lbl = labels.get(nb);
-            freq.set(lbl, (freq.get(lbl) || 0) + 1);
-          }
+          for (const nb of neighbors) { const lbl = labels.get(nb); freq.set(lbl, (freq.get(lbl) || 0) + 1); }
           let maxCount = 0, maxLabel = labels.get(node.id);
           freq.forEach((count, lbl) => { if (count > maxCount) { maxCount = count; maxLabel = lbl; } });
           if (maxLabel !== labels.get(node.id)) { labels.set(node.id, maxLabel); changed = true; }
         }
         if (!changed) break;
       }
-
       const communities = new Map();
-      labels.forEach((lbl, id) => {
-        if (!communities.has(lbl)) communities.set(lbl, new Set());
-        communities.get(lbl).add(id);
-      });
+      labels.forEach((lbl, id) => { if (!communities.has(lbl)) communities.set(lbl, new Set()); communities.get(lbl).add(id); });
       return { labels, communities: [...communities.values()] };
     }
 
@@ -340,10 +463,7 @@
         const current = path[path.length - 1];
         if (current === tgtId) return path;
         for (const nb of adj.get(current) || []) {
-          if (!visited.has(nb)) {
-            visited.add(nb);
-            queue.push([...path, nb]);
-          }
+          if (!visited.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
         }
       }
       return null;
@@ -355,16 +475,40 @@
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 3. ARCGIS MAP SETUP
+    // 3. RESIZABLE SPLIT PANEL
     // ═══════════════════════════════════════════════════════════════
-    const [GraphicsLayer, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, Point, PopupTemplate, TextSymbol] =
+    const resizer = document.getElementById("resizer");
+    const graphPanel = document.getElementById("graph-panel");
+    let isResizing = false;
+
+    resizer.addEventListener("mousedown", (e) => {
+      isResizing = true;
+      resizer.classList.add("dragging");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      e.preventDefault();
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!isResizing) return;
+      const containerRect = document.getElementById("split-container").getBoundingClientRect();
+      const newWidth = containerRect.right - e.clientX;
+      const clamped = Math.max(320, Math.min(containerRect.width * 0.65, newWidth));
+      graphPanel.style.width = clamped + "px";
+    });
+    document.addEventListener("mouseup", () => {
+      if (isResizing) { isResizing = false; resizer.classList.remove("dragging"); document.body.style.cursor = ""; document.body.style.userSelect = ""; }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4. ARCGIS MAP
+    // ═══════════════════════════════════════════════════════════════
+    const [GraphicsLayer, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, Point, TextSymbol] =
       await $arcgis.import([
         "@arcgis/core/layers/GraphicsLayer.js",
         "@arcgis/core/Graphic.js",
         "@arcgis/core/symbols/SimpleMarkerSymbol.js",
         "@arcgis/core/symbols/SimpleLineSymbol.js",
         "@arcgis/core/geometry/Point.js",
-        "@arcgis/core/PopupTemplate.js",
         "@arcgis/core/symbols/TextSymbol.js",
       ]);
 
@@ -380,95 +524,59 @@
     const highlightLayer = new GraphicsLayer({ title: "Highlights" });
     view.map.addMany([linkLayer, highlightLayer, nodeLayer, labelLayer]);
 
-    // Draw map links
     function drawMapLinks() {
       linkLayer.removeAll();
       links.forEach(link => {
         const sn = nodes.find(n => n.id === link.source || n.id === link.source?.id);
         const tn = nodes.find(n => n.id === link.target || n.id === link.target?.id);
         if (!sn || !tn) return;
-
         const volumeWidth = Math.max(1, Math.min(5, link.volume / 5000));
-        const lineColor = link.type === "supplies" ? "#f39c12" :
-                          link.type === "ships"    ? "#e74c3c" :
-                          link.type === "transit"  ? "#2ecc71" :
-                          link.type === "delivers" ? "#9b59b6" :
-                          link.type === "direct"   ? "#e67e22" : "#7f8c8d";
-
+        const lineColor = link.type === "supplies" ? "#f59e0b" : link.type === "ships" ? "#ef4444" :
+                          link.type === "transit" ? "#22c55e" : link.type === "delivers" ? "#a78bfa" :
+                          link.type === "direct" ? "#f97316" : "#64748b";
         linkLayer.add(new Graphic({
-          geometry: {
-            type: "polyline",
-            paths: [[[sn.lon, sn.lat], [tn.lon, tn.lat]]],
-          },
-          symbol: new SimpleLineSymbol({
-            color: lineColor,
-            width: volumeWidth,
-            style: link.type === "transfer" ? "dash" : "solid",
-          }),
+          geometry: { type: "polyline", paths: [[[sn.lon, sn.lat], [tn.lon, tn.lat]]] },
+          symbol: new SimpleLineSymbol({ color: lineColor, width: volumeWidth, style: link.type === "transfer" ? "dash" : "solid" }),
           attributes: { source: sn.name, target: tn.name, type: link.type, volume: link.volume },
         }));
       });
     }
     drawMapLinks();
 
-    // Draw map nodes
-    const nodeGraphicsMap = new Map();
     nodes.forEach(node => {
       const cfg = TYPES[node.type];
       const size = Math.max(10, Math.min(22, 8 + Math.log2(node.capacity) * 1.2));
-
-      const graphic = new Graphic({
+      nodeLayer.add(new Graphic({
         geometry: new Point({ longitude: node.lon, latitude: node.lat }),
         symbol: new SimpleMarkerSymbol({
-          color: cfg.color,
-          size: size,
-          outline: { color: "#1b2631", width: 2 },
-          style: node.type === "factory" ? "diamond" :
-                 node.type === "port" ? "triangle" :
-                 node.type === "supplier" ? "square" :
-                 node.type === "retailer" ? "cross" : "circle",
+          color: cfg.color, size,
+          outline: { color: "#0f1923", width: 2 },
+          style: node.type === "factory" ? "diamond" : node.type === "port" ? "triangle" :
+                 node.type === "supplier" ? "square" : node.type === "retailer" ? "cross" : "circle",
         }),
         attributes: { ...node },
-      });
-
-      nodeLayer.add(graphic);
-      nodeGraphicsMap.set(node.id, graphic);
-
-      // Label
+      }));
       labelLayer.add(new Graphic({
         geometry: new Point({ longitude: node.lon, latitude: node.lat }),
-        symbol: new TextSymbol({
-          text: node.name,
-          color: "#ecf0f1",
-          haloColor: "#1b2631",
-          haloSize: 2,
-          font: { size: 9, weight: "bold" },
-          yoffset: -14,
-        }),
+        symbol: new TextSymbol({ text: node.name, color: "#e2e8f0", haloColor: "#0f1923", haloSize: 2, font: { size: 9, weight: "bold" }, yoffset: -14 }),
       }));
     });
 
-    // Map click → popup + graph highlight
     mapEl.addEventListener("arcgisViewClick", async (event) => {
       const hit = await view.hitTest(event.detail);
       const result = hit.results.find(r => r.graphic?.attributes?.id);
       if (result) {
-        const attr = result.attributes || result.graphic.attributes;
-        const nodeId = attr.id;
-        highlightNodeEverywhere(nodeId);
-
+        const attr = result.graphic.attributes;
+        highlightNodeEverywhere(attr.id);
+        const adj = buildAdjacency(nodes, links);
         popupEl.location = result.mapPoint;
         popupEl.heading = attr.name;
-        const adj = buildAdjacency(nodes, links);
-        const degree = adj.get(nodeId)?.length || 0;
-        popupEl.content = `
-          <div class="popup-content">
-            <div><span class="label">Type:</span> <span class="value">${TYPES[attr.type]?.label}</span></div>
-            <div><span class="label">Country:</span> <span class="value">${attr.country}</span></div>
-            <div><span class="label">Capacity:</span> <span class="value">${attr.capacity?.toLocaleString()}</span></div>
-            <div><span class="label">Connections:</span> <span class="value">${degree}</span></div>
-          </div>
-        `;
+        popupEl.content = `<div class="popup-content">
+          <div><span class="label">Type:</span> <span class="value">${TYPES[attr.type]?.label}</span></div>
+          <div><span class="label">Country:</span> <span class="value">${attr.country}</span></div>
+          <div><span class="label">Capacity:</span> <span class="value">${attr.capacity?.toLocaleString()}</span></div>
+          <div><span class="label">Connections:</span> <span class="value">${adj.get(attr.id)?.length || 0}</span></div>
+        </div>`;
         popupEl.open = true;
       } else {
         popupEl.open = false;
@@ -477,61 +585,64 @@
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // 4. D3 FORCE-DIRECTED GRAPH
+    // 5. D3 GRAPH WITH ZOOM + PAN
     // ═══════════════════════════════════════════════════════════════
     const svgEl = document.getElementById("graph-svg");
     const container = document.getElementById("graph-svg-container");
-    const width = container.clientWidth || 420;
-    const height = container.clientHeight || 500;
 
-    const svg = d3.select(svgEl).attr("viewBox", [0, 0, width, height]);
+    const svg = d3.select(svgEl);
+    const gRoot = svg.append("g").attr("class", "root");
+    const gLinks = gRoot.append("g").attr("class", "links");
+    const gNodes = gRoot.append("g").attr("class", "nodes");
 
-    // Arrow markers for directed edges
+    // Full zoom + pan behavior
+    const zoomBehavior = d3.zoom()
+      .scaleExtent([0.15, 6])
+      .on("zoom", (event) => {
+        gRoot.attr("transform", event.transform);
+        document.getElementById("zoom-level").textContent = Math.round(event.transform.k * 100) + "%";
+      });
+
+    svg.call(zoomBehavior);
+
+    // Hide hint after first interaction
+    svg.on("wheel.hint mousedown.hint", () => {
+      document.getElementById("graph-hint").classList.add("hidden");
+    }, { once: true });
+
+    // Arrow markers
     const defs = svg.append("defs");
-    Object.entries(TYPES).forEach(([type, cfg]) => {
+    Object.entries(TYPES).forEach(([, cfg]) => {
       defs.append("marker")
-        .attr("id", `arrow-${type}`)
-        .attr("viewBox", "0 -3 6 6")
-        .attr("refX", 18).attr("refY", 0)
-        .attr("markerWidth", 5).attr("markerHeight", 5)
-        .attr("orient", "auto")
-        .append("path").attr("d", "M0,-3L6,0L0,3").attr("fill", cfg.color).attr("opacity", 0.6);
+        .attr("id", `arrow-${cfg.label.toLowerCase()}`)
+        .attr("viewBox", "0 -3 6 6").attr("refX", 22).attr("refY", 0)
+        .attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto")
+        .append("path").attr("d", "M0,-3L6,0L0,3").attr("fill", cfg.color).attr("opacity", 0.5);
     });
 
-    const gLinks = svg.append("g").attr("class", "links");
-    const gNodes = svg.append("g").attr("class", "nodes");
-
-    // Deep copy for D3 mutation
     const simNodes = nodes.map(n => ({ ...n }));
     const simLinks = links.map(l => ({ ...l }));
 
+    const w0 = container.clientWidth || 600;
+    const h0 = container.clientHeight || 500;
+
     const simulation = d3.forceSimulation(simNodes)
-      .force("link", d3.forceLink(simLinks).id(d => d.id).distance(60).strength(0.4))
-      .force("charge", d3.forceManyBody().strength(-120))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide(20))
-      .force("x", d3.forceX(width / 2).strength(0.05))
-      .force("y", d3.forceY(height / 2).strength(0.05));
+      .force("link", d3.forceLink(simLinks).id(d => d.id).distance(80).strength(0.35))
+      .force("charge", d3.forceManyBody().strength(-200))
+      .force("center", d3.forceCenter(w0 / 2, h0 / 2))
+      .force("collision", d3.forceCollide(25))
+      .force("x", d3.forceX(w0 / 2).strength(0.04))
+      .force("y", d3.forceY(h0 / 2).strength(0.04));
 
-    // Links
     const linkSel = gLinks.selectAll("line")
-      .data(simLinks)
-      .join("line")
-      .attr("stroke", d => {
-        const srcNode = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source);
-        return TYPES[srcNode?.type]?.color || "#555";
-      })
-      .attr("stroke-width", d => Math.max(1, d.volume / 5000))
-      .attr("stroke-opacity", 0.5)
-      .attr("marker-end", d => {
-        const srcNode = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source);
-        return `url(#arrow-${srcNode?.type || "warehouse"})`;
-      });
+      .data(simLinks).join("line")
+      .attr("stroke", d => { const s = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source); return TYPES[s?.type]?.color || "#555"; })
+      .attr("stroke-width", d => Math.max(1.2, d.volume / 4500))
+      .attr("stroke-opacity", 0.4)
+      .attr("marker-end", d => { const s = typeof d.source === "object" ? d.source : simNodes.find(n => n.id === d.source); return `url(#arrow-${TYPES[s?.type]?.label.toLowerCase() || "warehouse"})`; });
 
-    // Nodes
     const nodeSel = gNodes.selectAll("g")
-      .data(simNodes)
-      .join("g")
+      .data(simNodes).join("g")
       .attr("cursor", "pointer")
       .call(d3.drag()
         .on("start", (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
@@ -539,52 +650,100 @@
         .on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
       );
 
-    // Node shapes
+    // Node shapes (bigger)
     nodeSel.each(function(d) {
       const g = d3.select(this);
-      const r = Math.max(6, Math.min(14, 5 + Math.log2((d.capacity || 1000)) * 0.8));
+      const r = Math.max(8, Math.min(16, 6 + Math.log2((d.capacity || 1000)) * 0.9));
       d._radius = r;
       const cfg = TYPES[d.type];
 
+      // Glow ring (subtle)
+      g.append("circle").attr("r", r + 5).attr("fill", "none").attr("stroke", cfg.color).attr("stroke-opacity", 0.12).attr("class", "glow");
+
       if (d.type === "factory") {
-        g.append("rect").attr("width", r*1.6).attr("height", r*1.6).attr("x", -r*0.8).attr("y", -r*0.8)
+        g.append("rect").attr("width", r*1.7).attr("height", r*1.7).attr("x", -r*0.85).attr("y", -r*0.85)
           .attr("rx", 2).attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5)
-          .attr("transform", "rotate(45)");
+          .attr("transform", "rotate(45)").attr("class", "shape");
       } else if (d.type === "port") {
         g.append("polygon")
-          .attr("points", `0,${-r} ${r*0.87},${r*0.5} ${-r*0.87},${r*0.5}`)
-          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+          .attr("points", `0,${-r*1.1} ${r*0.95},${r*0.55} ${-r*0.95},${r*0.55}`)
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5).attr("class", "shape");
       } else if (d.type === "supplier") {
-        g.append("rect").attr("width", r*1.4).attr("height", r*1.4).attr("x", -r*0.7).attr("y", -r*0.7)
-          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+        g.append("rect").attr("width", r*1.5).attr("height", r*1.5).attr("x", -r*0.75).attr("y", -r*0.75)
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5).attr("class", "shape");
       } else {
         g.append("circle").attr("r", r)
-          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5);
+          .attr("fill", cfg.color).attr("stroke", "#fff").attr("stroke-width", 1.5).attr("class", "shape");
       }
 
-      // Label
       g.append("text")
-        .text(d.name.length > 18 ? d.name.slice(0, 16) + "…" : d.name)
-        .attr("dy", r + 12).attr("text-anchor", "middle")
-        .attr("fill", "#bdc3c7").attr("font-size", "8px").attr("font-weight", "500");
+        .text(d.name.length > 20 ? d.name.slice(0, 18) + "..." : d.name)
+        .attr("dy", r + 14).attr("text-anchor", "middle")
+        .attr("fill", "#94a3b8").attr("font-size", "9px").attr("font-weight", "500")
+        .attr("class", "node-label");
     });
 
-    // Click on graph node
-    let selectedNodes = [];
-    nodeSel.on("click", (event, d) => {
-      event.stopPropagation();
-      highlightNodeEverywhere(d.id);
+    // Tooltip on hover
+    const tooltip = document.getElementById("node-tooltip");
+    nodeSel.on("mouseenter", (event, d) => {
+      const adj = buildAdjacency(simNodes, simLinks);
+      const degree = adj.get(d.id)?.length || 0;
+      tooltip.innerHTML = `<strong>${d.name}</strong><br>${TYPES[d.type].label} &middot; ${degree} connections`;
+      tooltip.style.opacity = "1";
+      // Glow up
+      d3.select(event.currentTarget).select(".glow").transition().duration(200).attr("stroke-opacity", 0.4).attr("r", d._radius + 8);
+    }).on("mousemove", (event) => {
+      const rect = container.getBoundingClientRect();
+      tooltip.style.left = (event.clientX - rect.left + 14) + "px";
+      tooltip.style.top = (event.clientY - rect.top - 10) + "px";
+    }).on("mouseleave", (event, d) => {
+      tooltip.style.opacity = "0";
+      d3.select(event.currentTarget).select(".glow").transition().duration(300).attr("stroke-opacity", 0.12).attr("r", d._radius + 5);
     });
+
+    let selectedNodes = [];
+    nodeSel.on("click", (event, d) => { event.stopPropagation(); highlightNodeEverywhere(d.id); });
 
     simulation.on("tick", () => {
-      linkSel
-        .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      linkSel.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+             .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
       nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // 5. CROSS-HIGHLIGHTING (map ↔ graph)
+    // 6. GRAPH ZOOM CONTROLS
+    // ═══════════════════════════════════════════════════════════════
+    document.getElementById("g-zoom-in").addEventListener("click", () => {
+      svg.transition().duration(300).call(zoomBehavior.scaleBy, 1.4);
+    });
+    document.getElementById("g-zoom-out").addEventListener("click", () => {
+      svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.7);
+    });
+    document.getElementById("g-zoom-reset").addEventListener("click", () => {
+      svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity);
+    });
+    document.getElementById("g-zoom-fit").addEventListener("click", () => {
+      fitGraphToView();
+    });
+
+    function fitGraphToView() {
+      const bounds = gRoot.node().getBBox();
+      if (bounds.width === 0 || bounds.height === 0) return;
+      const fullW = container.clientWidth;
+      const fullH = container.clientHeight;
+      const padding = 40;
+      const scale = Math.min((fullW - padding * 2) / bounds.width, (fullH - padding * 2) / bounds.height, 2);
+      const tx = fullW / 2 - (bounds.x + bounds.width / 2) * scale;
+      const ty = fullH / 2 - (bounds.y + bounds.height / 2) * scale;
+      svg.transition().duration(600).ease(d3.easeCubicInOut)
+        .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }
+
+    // Auto-fit once layout stabilizes
+    simulation.on("end", () => fitGraphToView());
+
+    // ═══════════════════════════════════════════════════════════════
+    // 7. CROSS-HIGHLIGHTING
     // ═══════════════════════════════════════════════════════════════
     function highlightNodeEverywhere(nodeId) {
       const node = nodes.find(n => n.id === nodeId);
@@ -594,79 +753,97 @@
       const neighbors = new Set(adj.get(nodeId) || []);
       neighbors.add(nodeId);
 
-      // Graph highlight
-      nodeSel.select("circle, rect, polygon").attr("opacity", d => neighbors.has(d.id) ? 1 : 0.15);
-      nodeSel.select("text").attr("opacity", d => neighbors.has(d.id) ? 1 : 0.1);
-      linkSel.attr("stroke-opacity", d => {
-        const sid = d.source.id || d.source;
-        const tid = d.target.id || d.target;
-        return (sid === nodeId || tid === nodeId) ? 0.9 : 0.05;
-      });
+      // Graph
+      nodeSel.select(".shape").transition().duration(200)
+        .attr("opacity", d => neighbors.has(d.id) ? 1 : 0.12);
+      nodeSel.select(".node-label").transition().duration(200)
+        .attr("opacity", d => neighbors.has(d.id) ? 1 : 0.08);
+      nodeSel.select(".glow").transition().duration(200)
+        .attr("stroke-opacity", d => d.id === nodeId ? 0.6 : neighbors.has(d.id) ? 0.25 : 0);
+      linkSel.transition().duration(200)
+        .attr("stroke-opacity", d => {
+          const sid = d.source.id || d.source;
+          const tid = d.target.id || d.target;
+          return (sid === nodeId || tid === nodeId) ? 0.85 : 0.04;
+        })
+        .attr("stroke-width", d => {
+          const sid = d.source.id || d.source;
+          const tid = d.target.id || d.target;
+          return (sid === nodeId || tid === nodeId) ? Math.max(2, d.volume / 4000) : Math.max(1, d.volume / 5000);
+        });
 
-      // Map highlight ring
+      // Map
       highlightLayer.removeAll();
       highlightLayer.add(new Graphic({
         geometry: new Point({ longitude: node.lon, latitude: node.lat }),
-        symbol: new SimpleMarkerSymbol({
-          color: [255, 255, 255, 0],
-          size: 30,
-          outline: { color: "#00e5ff", width: 3 },
-        }),
+        symbol: new SimpleMarkerSymbol({ color: [255, 255, 255, 0], size: 34, outline: { color: "#38bdf8", width: 3 } }),
       }));
-
-      // Zoom map to node
       view.goTo({ center: [node.lon, node.lat], zoom: Math.max(view.zoom, 4) }, { duration: 800 });
 
-      // Update inspector
-      updateInspector(nodeId);
+      // Inspector
+      showInspector(nodeId);
 
-      // Track for shortest path
       selectedNodes.push(nodeId);
       if (selectedNodes.length > 2) selectedNodes = selectedNodes.slice(-2);
     }
 
     function clearHighlights() {
-      nodeSel.select("circle, rect, polygon").attr("opacity", 1);
-      nodeSel.select("text").attr("opacity", 1);
-      linkSel.attr("stroke-opacity", 0.5);
+      nodeSel.select(".shape").transition().duration(300).attr("opacity", 1);
+      nodeSel.select(".node-label").transition().duration(300).attr("opacity", 1);
+      nodeSel.select(".glow").transition().duration(300).attr("stroke-opacity", 0.12);
+      linkSel.transition().duration(300).attr("stroke-opacity", 0.4)
+        .attr("stroke-width", d => Math.max(1.2, d.volume / 4500));
       highlightLayer.removeAll();
-      document.getElementById("inspector").innerHTML = "<h4>Click a node to inspect</h4>";
+      hideInspector();
     }
 
     svg.on("click", () => clearHighlights());
 
     // ═══════════════════════════════════════════════════════════════
-    // 6. INSPECTOR PANEL
+    // 8. FLOATING INSPECTOR
     // ═══════════════════════════════════════════════════════════════
-    function updateInspector(nodeId) {
+    const inspectorEl = document.getElementById("inspector");
+    const inspectorTitle = document.getElementById("inspector-title");
+    const inspectorBody = document.getElementById("inspector-body");
+
+    document.getElementById("inspector-close").addEventListener("click", (e) => {
+      e.stopPropagation();
+      clearHighlights();
+    });
+
+    function showInspector(nodeId) {
       const node = nodes.find(n => n.id === nodeId);
       if (!node) return;
       const adj = buildAdjacency(nodes, links);
       const degree = adj.get(nodeId)?.length || 0;
       const pr = pageRank(nodes, links);
       const bc = betweennessCentrality(nodes, links);
-
       const inLinks = links.filter(l => (l.target.id || l.target) === nodeId);
       const outLinks = links.filter(l => (l.source.id || l.source) === nodeId);
       const totalVolume = [...inLinks, ...outLinks].reduce((sum, l) => sum + l.volume, 0);
 
-      document.getElementById("inspector").innerHTML = `
-        <h4>${node.name}</h4>
+      inspectorTitle.textContent = node.name;
+      inspectorBody.innerHTML = `
         <div class="metric"><span class="metric-label">Type</span><span class="metric-value">${TYPES[node.type].label}</span></div>
         <div class="metric"><span class="metric-label">Country</span><span class="metric-value">${node.country}</span></div>
         <div class="metric"><span class="metric-label">Capacity</span><span class="metric-value">${node.capacity.toLocaleString()}</span></div>
-        <div class="metric"><span class="metric-label">Degree</span><span class="metric-value">${degree}</span></div>
+        <div class="inspector-divider"></div>
+        <div class="metric"><span class="metric-label">Degree</span><span class="metric-value highlight">${degree}</span></div>
         <div class="metric"><span class="metric-label">In / Out</span><span class="metric-value">${inLinks.length} / ${outLinks.length}</span></div>
         <div class="metric"><span class="metric-label">Total Volume</span><span class="metric-value">${totalVolume.toLocaleString()}</span></div>
-        <div class="metric"><span class="metric-label">PageRank</span><span class="metric-value">${pr.get(nodeId)?.toFixed(4)}</span></div>
-        <div class="metric"><span class="metric-label">Betweenness</span><span class="metric-value">${bc.get(nodeId)?.toFixed(4)}</span></div>
+        <div class="inspector-divider"></div>
+        <div class="metric"><span class="metric-label">PageRank</span><span class="metric-value highlight">${pr.get(nodeId)?.toFixed(4)}</span></div>
+        <div class="metric"><span class="metric-label">Betweenness</span><span class="metric-value highlight">${bc.get(nodeId)?.toFixed(4)}</span></div>
       `;
+      inspectorEl.classList.add("visible");
     }
 
+    function hideInspector() { inspectorEl.classList.remove("visible"); }
+
     // ═══════════════════════════════════════════════════════════════
-    // 7. ALGORITHM BUTTONS
+    // 9. ALGORITHM BUTTONS
     // ═══════════════════════════════════════════════════════════════
-    const communityColors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c", "#e67e22", "#34495e"];
+    const communityColors = ["#ef4444", "#38bdf8", "#22c55e", "#f59e0b", "#a78bfa", "#14b8a6", "#f97316", "#64748b"];
     let activeAlgo = null;
 
     document.getElementById("algo-bar").addEventListener("click", (e) => {
@@ -674,7 +851,6 @@
       if (!btn) return;
       const algo = btn.dataset.algo;
 
-      // Toggle off
       document.querySelectorAll("#algo-bar button").forEach(b => b.classList.remove("active"));
       if (activeAlgo === algo) { activeAlgo = null; resetGraphVisuals(); return; }
       activeAlgo = algo;
@@ -683,101 +859,101 @@
       if (algo === "degree") {
         const scores = degreeCentrality(simNodes, simLinks);
         const max = Math.max(...scores.values());
-        nodeSel.select("circle, rect, polygon")
-          .transition().duration(500)
-          .attr("transform", d => { const s = 0.6 + (scores.get(d.id) / max) * 1.4; return `scale(${s})`; });
+        nodeSel.select(".shape").transition().duration(500)
+          .attr("transform", d => `scale(${0.6 + (scores.get(d.id) / max) * 1.6})`);
       }
       else if (algo === "pagerank") {
         const scores = pageRank(simNodes, simLinks);
         const max = Math.max(...scores.values());
-        nodeSel.select("circle, rect, polygon")
-          .transition().duration(500)
-          .attr("transform", d => { const s = 0.5 + (scores.get(d.id) / max) * 1.8; return `scale(${s})`; });
+        nodeSel.select(".shape").transition().duration(500)
+          .attr("transform", d => `scale(${0.5 + (scores.get(d.id) / max) * 2})`);
       }
       else if (algo === "betweenness") {
         const scores = betweennessCentrality(simNodes, simLinks);
         const max = Math.max(...scores.values()) || 1;
-        nodeSel.select("circle, rect, polygon")
-          .transition().duration(500)
-          .attr("transform", d => { const s = 0.5 + (scores.get(d.id) / max) * 2; return `scale(${s})`; });
+        nodeSel.select(".shape").transition().duration(500)
+          .attr("transform", d => `scale(${0.5 + (scores.get(d.id) / max) * 2.2})`);
       }
       else if (algo === "community") {
         const { labels, communities: comms } = communityDetection(simNodes, simLinks);
-        const labelToIdx = new Map();
-        let idx = 0;
+        const labelToIdx = new Map(); let idx = 0;
         labels.forEach((lbl) => { if (!labelToIdx.has(lbl)) labelToIdx.set(lbl, idx++); });
-        nodeSel.select("circle, rect, polygon")
-          .transition().duration(500)
+        nodeSel.select(".shape").transition().duration(500)
           .attr("fill", d => communityColors[labelToIdx.get(labels.get(d.id)) % communityColors.length]);
+        nodeSel.select(".glow").transition().duration(500)
+          .attr("stroke", d => communityColors[labelToIdx.get(labels.get(d.id)) % communityColors.length]);
         document.getElementById("stat-communities").textContent = comms.length;
       }
       else if (algo === "shortest") {
         if (selectedNodes.length < 2) {
-          document.getElementById("inspector").innerHTML =
-            "<h4>Shortest Path</h4><div class='metric'><span class='metric-label'>Select 2 nodes by clicking them</span></div>";
+          inspectorTitle.textContent = "Shortest Path";
+          inspectorBody.innerHTML = `<div class="metric"><span class="metric-label">Click 2 nodes first, then press Shortest Path</span></div>`;
+          inspectorEl.classList.add("visible");
           return;
         }
         const [src, tgt] = selectedNodes.slice(-2);
         const path = shortestPathBFS(simNodes, simLinks, src, tgt);
         if (!path) {
-          document.getElementById("inspector").innerHTML = "<h4>No path found</h4>";
+          inspectorTitle.textContent = "No Path Found";
+          inspectorBody.innerHTML = `<div class="metric"><span class="metric-label">These nodes are not connected</span></div>`;
+          inspectorEl.classList.add("visible");
           return;
         }
         const pathSet = new Set(path);
-        nodeSel.select("circle, rect, polygon").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.1);
-        nodeSel.select("text").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.05);
+        nodeSel.select(".shape").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.08);
+        nodeSel.select(".node-label").attr("opacity", d => pathSet.has(d.id) ? 1 : 0.04);
+        nodeSel.select(".glow").attr("stroke-opacity", d => pathSet.has(d.id) ? 0.5 : 0);
         linkSel.attr("stroke-opacity", d => {
-          const sid = d.source.id; const tid = d.target.id;
+          const sid = d.source.id, tid = d.target.id;
           for (let i = 0; i < path.length - 1; i++) {
             if ((path[i] === sid && path[i+1] === tid) || (path[i] === tid && path[i+1] === sid)) return 1;
           }
-          return 0.03;
+          return 0.02;
         }).attr("stroke", d => {
-          const sid = d.source.id; const tid = d.target.id;
+          const sid = d.source.id, tid = d.target.id;
           for (let i = 0; i < path.length - 1; i++) {
-            if ((path[i] === sid && path[i+1] === tid) || (path[i] === tid && path[i+1] === sid)) return "#00e5ff";
+            if ((path[i] === sid && path[i+1] === tid) || (path[i] === tid && path[i+1] === sid)) return "#38bdf8";
           }
           return TYPES[d.source?.type]?.color || "#555";
         });
 
-        // Highlight path on map
         highlightLayer.removeAll();
         path.forEach(id => {
           const n = nodes.find(nd => nd.id === id);
           if (n) highlightLayer.add(new Graphic({
             geometry: new Point({ longitude: n.lon, latitude: n.lat }),
-            symbol: new SimpleMarkerSymbol({ color: "#00e5ff", size: 16, outline: { color: "#fff", width: 2 } }),
+            symbol: new SimpleMarkerSymbol({ color: "#38bdf8", size: 16, outline: { color: "#fff", width: 2 } }),
           }));
         });
 
-        document.getElementById("inspector").innerHTML = `
-          <h4>Shortest Path (${path.length} hops)</h4>
-          ${path.map(id => `<div class="metric"><span class="metric-value">${nodes.find(n=>n.id===id)?.name}</span></div>`).join("")}
-        `;
+        inspectorTitle.textContent = `Path (${path.length - 1} hops)`;
+        inspectorBody.innerHTML = path.map((id, i) => {
+          const n = nodes.find(nd => nd.id === id);
+          return `<div class="metric"><span class="metric-label">${i + 1}.</span><span class="metric-value">${n?.name}</span></div>`;
+        }).join("");
+        inspectorEl.classList.add("visible");
       }
     });
 
     function resetGraphVisuals() {
-      nodeSel.select("circle, rect, polygon")
-        .transition().duration(300)
-        .attr("transform", "scale(1)")
-        .attr("fill", d => TYPES[d.type].color)
-        .attr("opacity", 1);
-      nodeSel.select("text").attr("opacity", 1);
-      linkSel.attr("stroke-opacity", 0.5)
-        .attr("stroke", d => TYPES[d.source?.type]?.color || "#555");
+      nodeSel.select(".shape").transition().duration(300)
+        .attr("transform", "scale(1)").attr("fill", d => TYPES[d.type].color).attr("opacity", 1);
+      nodeSel.select(".node-label").transition().duration(300).attr("opacity", 1);
+      nodeSel.select(".glow").transition().duration(300)
+        .attr("stroke-opacity", 0.12).attr("stroke", d => TYPES[d.type].color);
+      linkSel.transition().duration(300)
+        .attr("stroke-opacity", 0.4).attr("stroke", d => TYPES[d.source?.type]?.color || "#555")
+        .attr("stroke-width", d => Math.max(1.2, d.volume / 4500));
       highlightLayer.removeAll();
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 8. TOOLBAR ACTIONS
+    // 10. HEADER TOOLBAR
     // ═══════════════════════════════════════════════════════════════
-    document.getElementById("btn-toggle-links").addEventListener("click", () => {
+    const toggleBtn = document.getElementById("btn-toggle-links");
+    toggleBtn.addEventListener("click", () => {
       linkLayer.visible = !linkLayer.visible;
-    });
-
-    document.getElementById("btn-fit-graph").addEventListener("click", () => {
-      simulation.alpha(0.8).restart();
+      toggleBtn.classList.toggle("active", !linkLayer.visible);
     });
 
     document.getElementById("btn-reset").addEventListener("click", () => {
@@ -788,14 +964,21 @@
       clearHighlights();
       popupEl.open = false;
       view.goTo({ center: [20, 25], zoom: 2 }, { duration: 600 });
+      svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity);
+      simulation.alpha(0.6).restart();
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // 9. LEGEND & STATS
+    // 11. LEGEND & STATS
     // ═══════════════════════════════════════════════════════════════
     const legendEl = document.getElementById("legend");
-    Object.entries(TYPES).forEach(([, cfg]) => {
-      legendEl.innerHTML += `<span class="legend-item"><span class="legend-dot" style="background:${cfg.color}"></span>${cfg.label}</span>`;
+    const shapeClasses = { factory: "diamond", port: "triangle", supplier: "square", warehouse: "", retailer: "" };
+    Object.entries(TYPES).forEach(([key, cfg]) => {
+      const shapeClass = shapeClasses[key] || "";
+      const style = key === "port"
+        ? `border-bottom: 8px solid ${cfg.color}; background: transparent;`
+        : `background: ${cfg.color};`;
+      legendEl.innerHTML += `<span class="legend-item"><span class="legend-dot ${shapeClass}" style="${style}"></span>${cfg.label}</span>`;
     });
 
     document.getElementById("stat-nodes").textContent = nodes.length;
