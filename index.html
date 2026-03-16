@@ -93,7 +93,7 @@
 
         <!-- Graph Algorithms Block -->
         <calcite-block heading="Algorithms" description="Analyze network topology" open icon-start="analysis">
-          <calcite-list id="algo-list" selection-mode="single-persist">
+          <calcite-list id="algo-list" selection-mode="none">
             <calcite-list-item label="Degree Centrality" description="Size by connection count" value="degree">
               <calcite-icon slot="content-end" icon="number-circle-1" scale="s"></calcite-icon>
             </calcite-list-item>
@@ -795,17 +795,15 @@
       document.getElementById("inspector-block").open = true;
     }
 
-    const algoList = document.getElementById("algo-list");
-    algoList.addEventListener("calciteListChange", () => {
-      const selectedItems = algoList.selectedItems;
-      const selected = selectedItems.length > 0 ? selectedItems[0].value : null;
-
-      if (!selected || activeAlgo === selected) {
+    function runAlgorithm(selected) {
+      // Toggle off if same algo clicked again
+      if (activeAlgo === selected) {
         activeAlgo = null;
         clearHighlights();
-        selectedItems.forEach(item => item.selected = false);
         return;
       }
+      // Reset before applying new algo
+      clearHighlights();
       activeAlgo = selected;
 
       if (selected === "degree") applyAlgoSizing(degreeCentrality(nodes, links));
@@ -905,6 +903,13 @@
             <div slot="message">${path.map(id => nodes.find(n => n.id === id)?.name).join(" &rarr; ")}</div></calcite-notice>`;
         document.getElementById("inspector-block").open = true;
       }
+    }
+
+    // Attach click listeners to each algorithm list item directly
+    document.querySelectorAll("#algo-list calcite-list-item").forEach(item => {
+      item.addEventListener("click", () => {
+        runAlgorithm(item.value);
+      });
     });
 
     // ═══════════════════════════════════════════════════════════════
