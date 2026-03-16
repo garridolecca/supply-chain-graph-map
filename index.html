@@ -770,6 +770,7 @@
 
     function applyAlgoSizing(scores) {
       const max = Math.max(...scores.values()) || 1;
+      // Update link chart nodes
       lcNodeLayer.graphics.forEach(g => {
         const nid = g.attributes?.nodeId; if (!nid) return;
         const cfg = TYPES[g.attributes.type];
@@ -777,15 +778,32 @@
         const sz = 10 + ratio * 28;
         g.symbol = new SimpleMarkerSymbol({ color: cfg.color, size: sz, outline: { color: [255,255,255, 200], width: 2 }, style: cfg.markerStyle });
       });
+      // Update geo map nodes
+      geoNodeLayer.graphics.forEach(g => {
+        const nid = g.attributes?.nodeId; if (!nid) return;
+        const cfg = TYPES[g.attributes.type];
+        const ratio = scores.get(nid) / max;
+        const sz = 8 + ratio * 20;
+        g.symbol = new SimpleMarkerSymbol({ color: cfg.color, size: sz, outline: { color: [15, 23, 42], width: 2 }, style: cfg.markerStyle });
+      });
+
+      // Show result in inspector
+      const sorted = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+      document.getElementById("inspector-content").innerHTML = `
+        <calcite-notice open icon="graph-bar"><div slot="title">Top 5 by ${activeAlgo}</div>
+          <div slot="message">${sorted.map(([id, s]) => `${nodes.find(n => n.id === id)?.name}: ${s.toFixed(4)}`).join("<br>")}</div></calcite-notice>`;
+      document.getElementById("inspector-block").open = true;
     }
 
-    document.getElementById("algo-list").addEventListener("calciteListItemSelect", (event) => {
-      const selected = event.target.value;
+    const algoList = document.getElementById("algo-list");
+    algoList.addEventListener("calciteListChange", () => {
+      const selectedItems = algoList.selectedItems;
+      const selected = selectedItems.length > 0 ? selectedItems[0].value : null;
 
-      if (activeAlgo === selected) {
+      if (!selected || activeAlgo === selected) {
         activeAlgo = null;
         clearHighlights();
-        event.target.selected = false;
+        selectedItems.forEach(item => item.selected = false);
         return;
       }
       activeAlgo = selected;
@@ -797,11 +815,19 @@
         const { labels, communities } = communityDetect(nodes, links);
         const labelToIdx = new Map(); let idx = 0;
         labels.forEach(l => { if (!labelToIdx.has(l)) labelToIdx.set(l, idx++); });
+        // Color link chart nodes
         lcNodeLayer.graphics.forEach(g => {
           const nid = g.attributes?.nodeId; if (!nid) return;
           const ci = labelToIdx.get(labels.get(nid)) % communityRgb.length;
           const sz = Math.max(14, Math.min(24, 10 + Math.log2(g.attributes.capacity) * 1));
           g.symbol = new SimpleMarkerSymbol({ color: communityRgb[ci], size: sz, outline: { color: [255,255,255, 200], width: 2 }, style: TYPES[g.attributes.type].markerStyle });
+        });
+        // Color geo map nodes too
+        geoNodeLayer.graphics.forEach(g => {
+          const nid = g.attributes?.nodeId; if (!nid) return;
+          const ci = labelToIdx.get(labels.get(nid)) % communityRgb.length;
+          const sz = Math.max(10, Math.min(22, 8 + Math.log2(g.attributes.capacity) * 1.2));
+          g.symbol = new SimpleMarkerSymbol({ color: communityRgb[ci], size: sz, outline: { color: [15, 23, 42], width: 2 }, style: TYPES[g.attributes.type].markerStyle });
         });
         document.getElementById("inspector-content").innerHTML = `
           <calcite-notice open icon="group"><div slot="title">${communities.length} communities detected</div>
@@ -851,7 +877,7 @@
           });
         });
 
-        // Highlight path on geo map
+        // Highlight path on geo map - nodes
         geoHighlightLayer.removeAll();
         path.forEach(id => {
           const n = nodes.find(nd => nd.id === id);
@@ -860,10 +886,23 @@
             symbol: new SimpleMarkerSymbol({ color: [56, 189, 248], size: 18, outline: { color: [255,255,255], width: 2 } }),
           }));
         });
+        // Dim non-path geo nodes
+        geoNodeLayer.graphics.forEach(g => {
+          const nid = g.attributes?.nodeId; if (!nid) return;
+          const cfg = TYPES[g.attributes.type];
+          const onPath = pathSet.has(nid);
+          const sz = Math.max(10, Math.min(22, 8 + Math.log2(g.attributes.capacity) * 1.2));
+          g.symbol = new SimpleMarkerSymbol({
+            color: onPath ? [56, 189, 248] : [...cfg.color.slice(0,3), 30],
+            size: onPath ? 22 : 8,
+            outline: { color: onPath ? [255,255,255] : [15, 23, 42, 40], width: 2 },
+            style: cfg.markerStyle,
+          });
+        });
 
         document.getElementById("inspector-content").innerHTML = `
           <calcite-notice open icon="road-sign"><div slot="title">Path: ${path.length - 1} hops</div>
-            <div slot="message">${path.map(id => nodes.find(n => n.id === id)?.name).join(" → ")}</div></calcite-notice>`;
+            <div slot="message">${path.map(id => nodes.find(n => n.id === id)?.name).join(" &rarr; ")}</div></calcite-notice>`;
         document.getElementById("inspector-block").open = true;
       }
     });
